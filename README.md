@@ -15,7 +15,7 @@ npm run dev                         # http://localhost:3000
 npm run admin -- tu@mail.com        # (opcional) darle rol admin a un usuario ya registrado
 ```
 
-Tests de integración (40, contra un PostgreSQL real y un Last.fm falso local):
+Tests de integración (41, contra un PostgreSQL real y un Last.fm falso local):
 
 ```bash
 createdb spotify_wrapped_test
@@ -77,14 +77,14 @@ y "stream" = 30 s o más (criterio de Spotify).
 
 - **Access token**: JWT HS256 de 15 min con `{ sub: id, rol }`. Va en `Authorization: Bearer <token>`.
 - **Refresh token**: string aleatorio opaco de 7 días; en la base solo va su hash.
-  - **Rotación**: cada `/auth/refresh` revoca el usado y entrega uno nuevo.
+  - **Rotación**: cada `/api/auth/refresh` revoca el usado y entrega uno nuevo.
   - **Detección de reuso**: si llega un refresh ya revocado (alguien lo robó), se cierran todas las sesiones del usuario.
 - Contraseñas con bcrypt; cambiar la contraseña cierra todas las sesiones.
 - Login con mensaje genérico y comparación contra un hash falso: no revela qué emails existen.
 - El rol viaja en el JWT: después de `npm run admin` hay que volver a loguearse.
 
 Flujo del front: guardar ambos tokens → si una request da `401 Token vencido`, llamar a
-`/auth/refresh`, reemplazar los dos tokens y reintentar.
+`/api/auth/refresh`, reemplazar los dos tokens y reintentar.
 
 ## Middlewares (en orden)
 
@@ -106,73 +106,96 @@ Formato de error: `{ "error": "mensaje", "detalles": [...] }`.
 
 ## Endpoints
 
-Todo lo que no sea `/auth/*` ni `/health` requiere `Authorization: Bearer`.
+Todas las rutas van bajo `/api`.
+Todo lo que no sea `/api/auth/*` ni `/api/health` requiere `Authorization: Bearer`.
 Las listas paginadas aceptan `?page=1&limit=20` (máx. 100) y devuelven `{ data, page, limit, total, totalPages }`.
 Las duraciones salen en **segundos**.
 
 ### Auth y perfil
 | Método | Ruta | Body | Respuesta |
 |---|---|---|---|
-| POST | `/auth/register` | `{ nombre, apellido, email, password }` | 201 `{ usuario, accessToken, refreshToken }` |
-| POST | `/auth/login` | `{ email, password }` | 200 ídem |
-| POST | `/auth/refresh` | `{ refreshToken }` | 200 `{ accessToken, refreshToken }` |
-| POST | `/auth/logout` | `{ refreshToken }` | 204 |
-| GET | `/me` | | perfil |
-| PATCH | `/me` | `{ nombre?, apellido?, lastfm_usuario? }` | perfil |
-| PUT | `/me/password` | `{ actual, nueva }` | 204 (cierra sesiones) |
-| DELETE | `/me` | `{ password }` | 204 (borra todo en cascada) |
+| POST | `/api/auth/register` | `{ nombre, apellido, email, password }` | 201 `{ usuario, accessToken, refreshToken }` |
+| POST | `/api/auth/login` | `{ email, password }` | 200 ídem |
+| POST | `/api/auth/refresh` | `{ refreshToken }` | 200 `{ accessToken, refreshToken }` |
+| POST | `/api/auth/logout` | `{ refreshToken }` | 204 |
+| GET | `/api/me` | | perfil |
+| PATCH | `/api/me` | `{ nombre?, apellido?, lastfm_usuario? }` | perfil |
+| PUT | `/api/me/password` | `{ actual, nueva }` | 204 (cierra sesiones) |
+| DELETE | `/api/me` | `{ password }` | 204 (borra todo en cascada) |
 
 ### Historial e importaciones
 | Método | Ruta | Detalle |
 |---|---|---|
-| POST | `/me/importaciones/spotify` | `multipart/form-data`, campo `archivos` (uno o varios). Acepta `Streaming_History_Audio_*.json` (extendido) y `StreamingHistory_music_*.json` (básico). Reimportar no duplica |
-| POST | `/me/importaciones/lastfm` | `{ usuario?, desde?, hasta? }`. Sin `desde`, sigue desde el último scrobble importado. Hasta 10.000 por llamada (`completo: false` si quedan) |
-| GET | `/me/importaciones` | Lista con filas leídas / insertadas / descartadas |
-| DELETE | `/me/importaciones/:id` | Deshace la importación |
-| GET | `/me/reproducciones` | Paginado, `?desde=&hasta=` (ISO 8601) |
-| POST | `/me/reproducciones` | `{ cancionId, fechaHora?, msReproducidos? }` (carga manual) |
-| DELETE | `/me/reproducciones/:id` | |
-| POST | `/generos/sincronizar` | `{ limite? }` (máx. 100). Completa géneros con Last.fm de los artistas que escuchaste (admin: de todos) |
+| POST | `/api/me/importaciones/spotify` | `multipart/form-data`, campo `archivos` (uno o varios). Acepta `Streaming_History_Audio_*.json` (extendido) y `StreamingHistory_music_*.json` (básico). Reimportar no duplica |
+| POST | `/api/me/importaciones/lastfm` | `{ usuario?, desde?, hasta? }`. Sin `desde`, sigue desde el último scrobble importado. Hasta 10.000 por llamada (`completo: false` si quedan) |
+| GET | `/api/me/importaciones` | Lista con filas leídas / insertadas / descartadas |
+| DELETE | `/api/me/importaciones/:id` | Deshace la importación |
+| GET | `/api/me/reproducciones` | Paginado, `?desde=&hasta=` (ISO 8601) |
+| POST | `/api/me/reproducciones` | `{ cancionId, fechaHora?, msReproducidos? }` (carga manual) |
+| DELETE | `/api/me/reproducciones/:id` | |
+| POST | `/api/generos/sincronizar` | `{ limite? }` (máx. 100). Completa géneros con Last.fm de los artistas que escuchaste (admin: de todos) |
 
 ### Wrapped
 | Método | Ruta | Devuelve |
 |---|---|---|
-| GET | `/me/wrapped` | Años con datos + resumen de cada uno |
-| GET | `/me/wrapped/:anio` | Todo junto: `resumen`, `topCanciones`, `topArtistas`, `topGeneros` (top 5), `habitos` (día, hora y franja favorita, minutos por día), `porMes`, `minutosEstimados` |
-| GET | `/me/wrapped/:anio/canciones?limit=50` | Ranking completo |
-| GET | `/me/wrapped/:anio/artistas?limit=50` | |
-| GET | `/me/wrapped/:anio/generos?limit=50` | Con `porcentaje` sobre los streams del año (puede sumar más de 100%: un artista tiene varios géneros) |
-| GET | `/me/wrapped/:anio/habitos` | `porDia` (7), `porHora` (24) y `heatmap` día × hora |
-| GET | `/me/wrapped/:anio/meses` | Minutos y streams de los 12 meses |
+| GET | `/api/me/wrapped` | Años con datos + resumen de cada uno |
+| GET | `/api/me/wrapped/:anio` | Todo junto: `resumen`, `topCanciones`, `topArtistas`, `topGeneros` (top 5), `habitos` (día, hora y franja favorita, minutos por día), `porMes`, `minutosEstimados` |
+| GET | `/api/me/wrapped/:anio/canciones?limit=50` | Ranking completo |
+| GET | `/api/me/wrapped/:anio/artistas?limit=50` | |
+| GET | `/api/me/wrapped/:anio/generos?limit=50` | Con `porcentaje` sobre los streams del año (puede sumar más de 100%: un artista tiene varios géneros) |
+| GET | `/api/me/wrapped/:anio/habitos` | `porDia` (7), `porHora` (24) y `heatmap` día × hora |
+| GET | `/api/me/wrapped/:anio/meses` | Minutos y streams de los 12 meses |
 
 ### Biblioteca
 | Método | Ruta | Body |
 |---|---|---|
-| GET / POST | `/me/playlists` | `{ nombre }` |
-| GET / PATCH / DELETE | `/me/playlists/:id` | `{ nombre }` |
-| POST | `/me/playlists/:id/canciones` | `{ cancionId }` |
-| DELETE | `/me/playlists/:id/canciones/:cancionId` | |
-| GET | `/me/favoritos` | paginado |
-| PUT / DELETE | `/me/favoritos/:cancionId` | (PUT es idempotente) |
+| GET / POST | `/api/me/playlists` | `{ nombre }` |
+| GET / PATCH / DELETE | `/api/me/playlists/:id` | `{ nombre }` |
+| POST | `/api/me/playlists/:id/canciones` | `{ cancionId }` |
+| DELETE | `/api/me/playlists/:id/canciones/:cancionId` | |
+| GET | `/api/me/favoritos` | paginado |
+| PUT / DELETE | `/api/me/favoritos/:cancionId` | (PUT es idempotente) |
 
 Una playlist de otro usuario o un álbum responden **404** (no 403), para no revelar que existe.
 
 ### Catálogo (lectura: cualquier usuario; escritura: admin)
 | Método | Ruta | Notas |
 |---|---|---|
-| GET | `/generos` | con cantidad de artistas |
-| POST / PATCH / DELETE | `/generos`, `/generos/:id` | `{ nombre }` |
-| GET | `/artistas?q=&generoId=` | paginado, con géneros |
-| GET | `/artistas/:id` | géneros, álbumes, cantidad de canciones |
-| POST / PATCH / DELETE | `/artistas`, `/artistas/:id` | `{ nombre }`; no se borra si tiene canciones (409) |
-| PUT | `/artistas/:id/generos` | `{ generoIds: [] }` reemplaza la lista |
-| GET | `/albumes/:id` | con canciones y duración |
-| POST / PATCH / DELETE | `/albumes`, `/albumes/:id` | `{ nombre, artistaId, fechaLanzamiento? }` |
-| GET | `/canciones?q=&artistaId=` | paginado; `q` busca en canción y artista |
-| GET | `/canciones/:id` | |
-| POST / PATCH / DELETE | `/canciones`, `/canciones/:id` | `{ nombre, artistaId, albumId?, duracionSegundos? }`; no se borra si tiene historial (409) |
+| GET | `/api/generos` | con cantidad de artistas |
+| POST / PATCH / DELETE | `/api/generos`, `/api/generos/:id` | `{ nombre }` |
+| GET | `/api/artistas?q=&generoId=` | paginado, con géneros |
+| GET | `/api/artistas/:id` | géneros, álbumes, cantidad de canciones |
+| POST / PATCH / DELETE | `/api/artistas`, `/api/artistas/:id` | `{ nombre }`; no se borra si tiene canciones (409) |
+| PUT | `/api/artistas/:id/generos` | `{ generoIds: [] }` reemplaza la lista |
+| GET | `/api/albumes/:id` | con canciones y duración |
+| POST / PATCH / DELETE | `/api/albumes`, `/api/albumes/:id` | `{ nombre, artistaId, fechaLanzamiento? }` |
+| GET | `/api/canciones?q=&artistaId=` | paginado; `q` busca en canción y artista |
+| GET | `/api/canciones/:id` | |
+| POST / PATCH / DELETE | `/api/canciones`, `/api/canciones/:id` | `{ nombre, artistaId, albumId?, duracionSegundos? }`; no se borra si tiene historial (409) |
 
 ---
+
+## Arquitectura en capas
+
+```
+Clientes ──> Controllers ──> Services ──> Repositories ──> PostgreSQL
+             auth            auth         usuarios, tokens
+             catalogo        catalogo     catalogo
+             biblioteca      biblioteca   biblioteca
+             historial       historial    historial, importador
+             wrapped         wrapped      wrapped
+                             + tokens, generos, importador (usados por otros services)
+                             + lastfm (API externa), spotifyParser (archivos)
+```
+
+| Capa | Hace | No hace |
+|---|---|---|
+| **Controllers** | Definen las rutas, validan con zod, eligen el status HTTP | SQL, reglas de negocio |
+| **Services** | Reglas de negocio, transacciones, errores (`notFound`, `conflict`...), llaman a otros services y a Last.fm | Tocar `req` / `res`, SQL |
+| **Repositories** | Todo el SQL. Devuelven filas | Decidir qué hacer si no hay resultado |
+
+Las dependencias van siempre hacia la derecha. Para una transacción, el service abre
+`withTransaction` y le pasa el `client` a cada repositorio (último parámetro, `db`).
 
 ## Estructura
 
@@ -184,13 +207,19 @@ src/
   config.js              variables de entorno validadas con zod
   db.js                  pool de pg, transacciones, parsers de tipos
   middlewares/           auth, validate, errorHandler, upload, rateLimit
-  routes/                auth (+ /me), historial, wrapped, biblioteca, catalogo
+  controllers/           auth (+ /me), historial, wrapped, biblioteca, catalogo
   services/
+    auth.js              registro, login, perfil, contraseña
+    biblioteca.js        playlists y favoritos
+    catalogo.js          géneros, artistas, álbumes, canciones
+    historial.js         reproducciones e importaciones
+    wrapped.js           arma las respuestas de las estadísticas
     tokens.js            JWT + refresh tokens con rotación
     spotifyParser.js     normaliza los dos formatos del export
     lastfm.js            cliente de Last.fm (scrobbles y tags)
-    importador.js        carga por lotes con unnest() en una transacción
+    importador.js        carga por lotes en una transacción
     generos.js           tags de Last.fm → géneros
+  repositories/          SQL: usuarios, tokens, biblioteca, catalogo, historial, importador, wrapped
 scripts/promover-admin.js
 test/                    tests de integración (node:test + supertest)
 ```

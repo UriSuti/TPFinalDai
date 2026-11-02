@@ -5,11 +5,11 @@ import morgan from 'morgan';
 import { config } from './config.js';
 import { query } from './db.js';
 import { errorHandler, notFoundHandler } from './middlewares/errorHandler.js';
-import { authRouter, meRouter } from './routes/auth.js';
-import { bibliotecaRouter } from './routes/biblioteca.js';
-import { catalogoRouter } from './routes/catalogo.js';
-import { historialRouter } from './routes/historial.js';
-import { wrappedRouter } from './routes/wrapped.js';
+import { authRouter, meRouter } from './controllers/auth.js';
+import { bibliotecaRouter } from './controllers/biblioteca.js';
+import { catalogoRouter } from './controllers/catalogo.js';
+import { historialRouter } from './controllers/historial.js';
+import { wrappedRouter } from './controllers/wrapped.js';
 
 // app separado de server.js para poder testearlo con supertest sin abrir un puerto.
 export const app = express();
@@ -23,17 +23,22 @@ app.use(cors({ origin: config.CORS_ORIGIN.split(',').map((o) => o.trim()) }));
 if (config.NODE_ENV !== 'test') app.use(morgan(config.NODE_ENV === 'production' ? 'combined' : 'dev'));
 app.use(express.json({ limit: '1mb' }));
 
-app.get('/health', async (_req, res) => {
+// Todas las rutas cuelgan de /api
+const api = express.Router();
+
+api.get('/health', async (_req, res) => {
   await query('SELECT 1');
   res.json({ ok: true });
 });
 
-app.use('/auth', authRouter);
-app.use('/me', meRouter);
-app.use('/me', bibliotecaRouter);  // /me/playlists, /me/favoritos
-app.use('/me', historialRouter);   // /me/reproducciones, /me/importaciones
-app.use('/me/wrapped', wrappedRouter);
-app.use('/', catalogoRouter);      // /generos, /artistas, /albumes, /canciones
+api.use('/auth', authRouter);
+api.use('/me', meRouter);
+api.use('/me', bibliotecaRouter);  // /me/playlists, /me/favoritos
+api.use('/me', historialRouter);   // /me/reproducciones, /me/importaciones
+api.use('/me/wrapped', wrappedRouter);
+api.use('/', catalogoRouter);      // /generos, /artistas, /albumes, /canciones
+
+app.use('/api', api);
 
 app.use(notFoundHandler);
 app.use(errorHandler);
