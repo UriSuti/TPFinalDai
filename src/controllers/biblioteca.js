@@ -67,3 +67,59 @@ bibliotecaRouter.delete('/favoritos/:cancionId', validate({ params: cancionParam
   await bibliotecaService.quitarFavorito(req.user.id, req.valid.params.cancionId);
   res.status(204).end();
 });
+
+// ---------- Biblioteca (estado de cada canción) ----------
+
+const estado = z.enum(['quiero_escuchar', 'escuchando', 'escuchado']);
+
+bibliotecaRouter.get(
+  '/biblioteca',
+  validate({ query: paginationQuery.extend({ estado: estado.optional() }) }),
+  async (req, res) => {
+    res.json(await bibliotecaService.listarBiblioteca(req.user.id, req.valid.query));
+  },
+);
+
+bibliotecaRouter.put(
+  '/biblioteca/:cancionId',
+  validate({ params: cancionParam, body: z.object({ estado }) }),
+  async (req, res) => {
+    res.json(await bibliotecaService.guardarEnBiblioteca(req.user.id, req.valid.params.cancionId, req.valid.body.estado));
+  },
+);
+
+bibliotecaRouter.delete('/biblioteca/:cancionId', validate({ params: cancionParam }), async (req, res) => {
+  await bibliotecaService.quitarDeBiblioteca(req.user.id, req.valid.params.cancionId);
+  res.status(204).end();
+});
+
+// ---------- Reseñas ----------
+
+const resenaBody = z.object({
+  puntuacion: z.number().int().min(1).max(5).optional(),
+  comentario: z.string().trim().min(1).max(2000).optional(),
+}).refine((b) => Object.keys(b).length > 0, 'Mandá una puntuación o un comentario');
+
+bibliotecaRouter.get('/resenas', validate({ query: paginationQuery }), async (req, res) => {
+  res.json(await bibliotecaService.listarResenas(req.user.id, req.valid.query));
+});
+
+bibliotecaRouter.put('/resenas/:cancionId', validate({ params: cancionParam, body: resenaBody }), async (req, res) => {
+  res.json(await bibliotecaService.guardarResena(req.user.id, req.valid.params.cancionId, req.valid.body));
+});
+
+bibliotecaRouter.delete('/resenas/:cancionId', validate({ params: cancionParam }), async (req, res) => {
+  await bibliotecaService.quitarResena(req.user.id, req.valid.params.cancionId);
+  res.status(204).end();
+});
+
+// ---------- Relación del usuario con una canción ----------
+
+const relacionQuery = z.object({
+  artista: z.string().trim().min(1).max(200),
+  nombre: z.string().trim().min(1).max(200),
+});
+
+bibliotecaRouter.get('/canciones/estado', validate({ query: relacionQuery }), async (req, res) => {
+  res.json(await bibliotecaService.relacionConCancion(req.user.id, req.valid.query.artista, req.valid.query.nombre));
+});

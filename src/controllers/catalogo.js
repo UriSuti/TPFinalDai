@@ -140,6 +140,21 @@ catalogoRouter.post('/canciones', soloAdmin, validate({ body: cancionSchema }), 
   res.status(201).json(await catalogoService.crearCancion(req.valid.body));
 });
 
+// Canción de la API externa -> canción del catálogo (cualquier usuario logueado).
+// La portada se le muestra a todos los usuarios de esa canción: solo se acepta del CDN de Apple.
+const resolverSchema = z.object({
+  nombre: texto,
+  artista: texto,
+  album: texto.nullable().optional(),
+  duracionSegundos: duracionSeg.nullable().optional(),
+  itunesId: z.number().int().positive().nullable().optional(),
+  portadaUrl: z.url({ protocol: /^https$/, hostname: /\.mzstatic\.com$/ }).nullable().optional(),
+});
+
+catalogoRouter.post('/canciones/resolver', validate({ body: resolverSchema }), async (req, res) => {
+  res.json(await catalogoService.resolverCancion(req.valid.body));
+});
+
 catalogoRouter.patch(
   '/canciones/:id',
   soloAdmin,

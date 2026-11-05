@@ -7,7 +7,11 @@ const schema = z.object({
   PORT: z.coerce.number().int().positive().default(3000),
   DATABASE_URL: z.string().min(1, 'DATABASE_URL es obligatoria'),
   JWT_SECRET: z.string().min(32, 'JWT_SECRET debe tener al menos 32 caracteres'),
-  JWT_ACCESS_TTL: z.string().default('15m'),
+  // En el navegador la sesión dura lo que dura este JWT (no se renueva sola)
+  JWT_ACCESS_TTL: z.string().default('2h'),
+  // strict sirve con front y back en el mismo sitio (localhost:5173 y localhost:3000 lo son).
+  // Con dominios distintos en producción: none (fuerza Secure).
+  COOKIE_SAMESITE: z.enum(['strict', 'lax', 'none']).default('strict'),
   REFRESH_TTL_DIAS: z.coerce.number().int().positive().default(7),
   BCRYPT_ROUNDS: z.coerce.number().int().min(4).max(15).default(12),
   CORS_ORIGIN: z.string().default('http://localhost:5173'),

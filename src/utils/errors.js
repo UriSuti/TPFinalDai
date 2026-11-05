@@ -1,14 +1,17 @@
 // Error "esperado": el errorHandler lo convierte en una respuesta con su status.
 export class AppError extends Error {
-  constructor(status, mensaje, detalles) {
+  constructor(status, mensaje, detalles, codigo) {
     super(mensaje);
     this.status = status;
     this.detalles = detalles;
+    this.codigo = codigo;
   }
 }
 
 export const badRequest = (msg, detalles) => new AppError(400, msg, detalles);
-export const unauthorized = (msg = 'No autenticado') => new AppError(401, msg);
+// codigo: para que el cliente distinga un problema de sesión (TOKEN_*) de otros 401,
+// como una contraseña incorrecta, que no deben cerrarle la sesión.
+export const unauthorized = (msg = 'No autenticado', codigo) => new AppError(401, msg, undefined, codigo);
 export const forbidden = (msg = 'No tenés permiso para esta acción') => new AppError(403, msg);
 export const notFound = (msg = 'Recurso no encontrado') => new AppError(404, msg);
 export const conflict = (msg) => new AppError(409, msg);

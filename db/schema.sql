@@ -1,9 +1,15 @@
 --
--- PostgreSQL — Spotify Wrapped v4 (esquema para el backend)
+-- PostgreSQL — Spotify Wrapped v5 (esquema para el backend)
 --
 -- Restaurar sobre una base VACÍA. Requiere PostgreSQL 12+.
 --
--- Cambios respecto de la v3 (motivo: lo que traen de verdad las fuentes externas):
+-- Cambios respecto de la v4 (motivo: lo que necesita el front):
+--   * NUEVAS tablas: biblioteca (estado de cada canción para el usuario) y resenas
+--     (puntuación y comentario).
+--   * canciones.itunes_id y canciones.portada_url: datos de la API externa con la que se
+--     explora el catálogo. Opcionales: lo importado de Spotify o Last.fm no los trae.
+--
+-- Cambios de la v4 respecto de la v3 (motivo: lo que traen de verdad las fuentes externas):
 --   * canciones.duracion y canciones.album_id pasan a ser opcionales: ni el export de
 --     Spotify ni Last.fm traen la duración de la canción, y Last.fm a veces no trae álbum.
 --   * Deduplicación por clave natural: artista por nombre, álbum por (artista, nombre),
@@ -102,7 +108,9 @@ CREATE TABLE public.canciones (
     artista_id integer NOT NULL,
     album_id integer,
     album_es_album boolean GENERATED ALWAYS AS (true) STORED NOT NULL,
-    spotify_uri character varying
+    spotify_uri character varying,
+    itunes_id bigint,
+    portada_url character varying
 );
 
 ALTER TABLE public.canciones OWNER TO postgres;
@@ -125,6 +133,36 @@ CREATE TABLE public.favoritos (
 );
 
 ALTER TABLE public.favoritos OWNER TO postgres;
+
+
+--
+-- Estado de cada canción para el usuario. Es independiente de favoritos: una canción
+-- puede estar "escuchada" y además ser favorita.
+--
+CREATE TABLE public.biblioteca (
+    usuario_id integer NOT NULL,
+    cancion_id integer NOT NULL,
+    estado character varying NOT NULL,
+    fecha_agregada timestamp with time zone DEFAULT now() NOT NULL,
+    fecha_actualizacion timestamp with time zone DEFAULT now() NOT NULL
+);
+
+ALTER TABLE public.biblioteca OWNER TO postgres;
+
+
+--
+-- Una reseña por usuario y canción. Puede tener solo puntuación, solo comentario o ambos.
+--
+CREATE TABLE public.resenas (
+    usuario_id integer NOT NULL,
+    cancion_id integer NOT NULL,
+    puntuacion smallint,
+    comentario character varying,
+    fecha_creacion timestamp with time zone DEFAULT now() NOT NULL,
+    fecha_actualizacion timestamp with time zone DEFAULT now() NOT NULL
+);
+
+ALTER TABLE public.resenas OWNER TO postgres;
 
 
 --
@@ -253,6 +291,22 @@ ALTER TABLE ONLY public.favoritos
     ADD CONSTRAINT favoritos_pk PRIMARY KEY (usuario_id, cancion_id);
 
 
+ALTER TABLE ONLY public.biblioteca
+    ADD CONSTRAINT biblioteca_pk PRIMARY KEY (usuario_id, cancion_id);
+ALTER TABLE public.biblioteca
+    ADD CONSTRAINT biblioteca_estado_ck CHECK (estado IN ('quiero_escuchar', 'escuchando', 'escuchado'));
+
+
+ALTER TABLE ONLY public.resenas
+    ADD CONSTRAINT resenas_pk PRIMARY KEY (usuario_id, cancion_id);
+ALTER TABLE public.resenas
+    ADD CONSTRAINT resenas_puntuacion_ck CHECK (puntuacion BETWEEN 1 AND 5);
+ALTER TABLE public.resenas
+    ADD CONSTRAINT resenas_contenido_ck CHECK (
+        puntuacion IS NOT NULL OR (comentario IS NOT NULL AND btrim(comentario) <> '')
+    );
+
+
 ALTER TABLE ONLY public.importaciones
     ADD CONSTRAINT importaciones_pk PRIMARY KEY (id);
 ALTER TABLE public.importaciones
@@ -319,6 +373,20 @@ ALTER TABLE ONLY public.favoritos
     ADD CONSTRAINT favoritos_canciones_fk FOREIGN KEY (cancion_id)
     REFERENCES public.canciones(id) ON DELETE CASCADE;
 
+ALTER TABLE ONLY public.biblioteca
+    ADD CONSTRAINT biblioteca_usuarios_fk FOREIGN KEY (usuario_id)
+    REFERENCES public.usuarios(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.biblioteca
+    ADD CONSTRAINT biblioteca_canciones_fk FOREIGN KEY (cancion_id)
+    REFERENCES public.canciones(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.resenas
+    ADD CONSTRAINT resenas_usuarios_fk FOREIGN KEY (usuario_id)
+    REFERENCES public.usuarios(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.resenas
+    ADD CONSTRAINT resenas_canciones_fk FOREIGN KEY (cancion_id)
+    REFERENCES public.canciones(id) ON DELETE CASCADE;
+
 ALTER TABLE ONLY public.importaciones
     ADD CONSTRAINT importaciones_usuarios_fk FOREIGN KEY (usuario_id)
     REFERENCES public.usuarios(id) ON DELETE CASCADE;
@@ -349,6 +417,8 @@ CREATE INDEX canciones_album_id_idx ON public.canciones USING btree (album_id);
 CREATE INDEX canciones_spotify_uri_idx ON public.canciones USING btree (spotify_uri);
 CREATE INDEX canciones_playlists_cancion_id_idx ON public.canciones_playlists USING btree (cancion_id);
 CREATE INDEX favoritos_cancion_id_idx ON public.favoritos USING btree (cancion_id);
+CREATE INDEX biblioteca_cancion_id_idx ON public.biblioteca USING btree (cancion_id);
+CREATE INDEX resenas_cancion_id_idx ON public.resenas USING btree (cancion_id);
 CREATE INDEX importaciones_usuario_id_idx ON public.importaciones USING btree (usuario_id);
 -- reproducciones_uq (usuario_id, fecha_hora, cancion_id) ya sirve para filtrar por usuario y rango de fechas
 CREATE INDEX reproducciones_cancion_id_idx ON public.reproducciones USING btree (cancion_id);

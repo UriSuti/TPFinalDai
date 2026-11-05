@@ -130,3 +130,121 @@ describe('favoritos', () => {
     await api().delete(`/api/me/favoritos/${cancion1.id}`).set(ana.auth).expect(404);
   });
 });
+
+describe('resolver canción de la API externa', () => {
+  const portadaUrl = 'https://is1-ssl.mzstatic.com/image/thumb/x/600x600bb.jpg';
+  const externa = {
+    nombre: 'Persiana americana', artista: 'Soda Stereo', album: 'Signos',
+    duracionSegundos: 288, itunesId: 6781080934, portadaUrl,
+  };
+
+  test('un usuario común la crea; repetir devuelve la misma', async () => {
+    const r1 = await api().post('/api/canciones/resolver').set(ana.auth).send(externa).expect(200);
+    const r2 = await api().post('/api/canciones/resolver').set(beto.auth).send(externa).expect(200);
+    assert.equal(r1.body.id, r2.body.id);
+    assert.equal(r1.body.itunes_id, externa.itunesId); // bigint: no entra en un int
+    assert.equal(r1.body.artista.id, artista.id); // reusa el artista existente
+    assert.equal(r1.body.album.nombre, 'Signos');
+    assert.equal(r1.body.duracion, 288);
+  });
+
+  test('misma clave natural que el catálogo: completa lo que falta y no pisa nada', async () => {
+    const r = await api().post('/api/canciones/resolver').set(ana.auth)
+      .send({ nombre: 'TÉ PARA TRES', artista: 'soda stereo', album: 'Otro álbum', duracionSegundos: 100, portadaUrl })
+      .expect(200);
+    assert.equal(r.body.id, cancion2.id);
+    assert.equal(r.body.nombre, 'Té para tres');
+    assert.equal(r.body.album.nombre, 'Canción Animal');
+    assert.equal(r.body.duracion, 100); // no tenía duración
+    assert.equal(r.body.portada_url, portadaUrl);
+  });
+
+  test('sin álbum también funciona; portada fuera del CDN de Apple o sin login -> rechazo', async () => {
+    const sinAlbum = await api().post('/api/canciones/resolver').set(ana.auth).send({ nombre: 'Single', artista: 'Nuevo' }).expect(200);
+    assert.equal(sinAlbum.body.album, null);
+    await api().post('/api/canciones/resolver').set(ana.auth)
+      .send({ nombre: 'X', artista: 'Y', portadaUrl: 'https://malicioso.example/a.png' }).expect(400);
+    await api().post('/api/canciones/resolver').set(ana.auth)
+      .send({ nombre: 'X', artista: 'Y', portadaUrl: 'http://is1-ssl.mzstatic.com/a.jpg' }).expect(400);
+    await api().post('/api/canciones/resolver').send({ nombre: 'X', artista: 'Y' }).expect(401);
+  });
+});
+
+describe('biblioteca (estados)', () => {
+  test('guardar, cambiar de estado, filtrar y quitar', async () => {
+    await api().put(`/api/me/biblioteca/${cancion1.id}`).set(ana.auth).send({ estado: 'quiero_escuchar' }).expect(200);
+    const r = await api().put(`/api/me/biblioteca/${cancion1.id}`).set(ana.auth).send({ estado: 'escuchado' }).expect(200);
+    assert.equal(r.body.estado, 'escuchado');
+    await api().put(`/api/me/biblioteca/${cancion2.id}`).set(ana.auth).send({ estado: 'escuchando' }).expect(200);
+
+    const todas = await api().get('/api/me/biblioteca').set(ana.auth).expect(200);
+    assert.equal(todas.body.total, 2);
+    assert.ok('portada_url' in todas.body.data[0] && 'itunes_id' in todas.body.data[0]);
+
+    const filtradas = await api().get('/api/me/biblioteca?estado=escuchado').set(ana.auth).expect(200);
+    assert.equal(filtradas.body.total, 1);
+    assert.equal(filtradas.body.data[0].id, cancion1.id);
+
+    await api().delete(`/api/me/biblioteca/${cancion2.id}`).set(ana.auth).expect(204);
+    await api().delete(`/api/me/biblioteca/${cancion2.id}`).set(ana.auth).expect(404);
+  });
+
+  test('estado o canción inválidos -> 400; cada usuario ve lo suyo', async () => {
+    await api().put(`/api/me/biblioteca/${cancion1.id}`).set(ana.auth).send({ estado: 'favorito' }).expect(400);
+    await api().get('/api/me/biblioteca?estado=otro').set(ana.auth).expect(400);
+    await api().put('/api/me/biblioteca/9999').set(ana.auth).send({ estado: 'escuchado' }).expect(400);
+    const otro = await api().get('/api/me/biblioteca').set(beto.auth).expect(200);
+    assert.equal(otro.body.total, 0);
+  });
+});
+
+describe('reseñas', () => {
+  test('puntuación y comentario se guardan por separado sin pisarse', async () => {
+    await api().put(`/api/me/resenas/${cancion1.id}`).set(ana.auth).send({ puntuacion: 4 }).expect(200);
+    const r = await api().put(`/api/me/resenas/${cancion1.id}`).set(ana.auth).send({ comentario: '  Un clásico  ' }).expect(200);
+    assert.equal(r.body.puntuacion, 4);
+    assert.equal(r.body.comentario, 'Un clásico');
+
+    const l = await api().get('/api/me/resenas').set(ana.auth).expect(200);
+    assert.equal(l.body.total, 1);
+    assert.equal(l.body.data[0].artista, 'Soda Stereo');
+    assert.equal((await api().get('/api/me/resenas').set(beto.auth).expect(200)).body.total, 0);
+  });
+
+  test('datos inválidos -> 400; quitar -> 204 y después 404', async () => {
+    await api().put(`/api/me/resenas/${cancion1.id}`).set(ana.auth).send({ puntuacion: 6 }).expect(400);
+    await api().put(`/api/me/resenas/${cancion1.id}`).set(ana.auth).send({ comentario: '   ' }).expect(400);
+    await api().put(`/api/me/resenas/${cancion1.id}`).set(ana.auth).send({}).expect(400);
+    await api().delete(`/api/me/resenas/${cancion1.id}`).set(ana.auth).expect(204);
+    await api().delete(`/api/me/resenas/${cancion1.id}`).set(ana.auth).expect(404);
+  });
+});
+
+describe('relación del usuario con una canción', () => {
+  const consultar = (u, artista, nombre) => api().get('/api/me/canciones/estado').query({ artista, nombre }).set(u.auth);
+
+  test('canción fuera del catálogo: nada guardado', async () => {
+    const r = await consultar(ana, 'Nadie', 'Nada').expect(200);
+    assert.deepEqual(r.body, { id: null, estado: null, favorito: false, resena: null, playlists: [] });
+  });
+
+  test('junta estado, favorito, reseña y playlists de ese usuario, sin distinguir mayúsculas', async () => {
+    const playlist = (await api().post('/api/me/playlists').set(ana.auth).send({ nombre: 'Mix' }).expect(201)).body;
+    await api().post(`/api/me/playlists/${playlist.id}/canciones`).set(ana.auth).send({ cancionId: cancion1.id }).expect(201);
+    await api().put(`/api/me/favoritos/${cancion1.id}`).set(ana.auth).expect(201);
+    await api().put(`/api/me/biblioteca/${cancion1.id}`).set(ana.auth).send({ estado: 'escuchado' }).expect(200);
+    await api().put(`/api/me/resenas/${cancion1.id}`).set(ana.auth).send({ puntuacion: 5 }).expect(200);
+
+    const r = await consultar(ana, 'SODA STEREO', 'de música ligera').expect(200);
+    assert.equal(r.body.id, cancion1.id);
+    assert.equal(r.body.estado, 'escuchado');
+    assert.equal(r.body.favorito, true);
+    assert.deepEqual(r.body.resena, { puntuacion: 5, comentario: null });
+    assert.deepEqual(r.body.playlists, [playlist.id]);
+
+    const otro = await consultar(beto, 'Soda Stereo', 'De música ligera').expect(200);
+    assert.deepEqual(otro.body, { id: cancion1.id, estado: null, favorito: false, resena: null, playlists: [] });
+
+    await consultar(ana, '', 'x').expect(400);
+  });
+});

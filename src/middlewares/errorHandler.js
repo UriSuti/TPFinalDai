@@ -45,5 +45,6 @@ export function errorHandler(err, req, res, _next) {
 
   const body = { error: error.message };
   if (error.detalles) body.detalles = error.detalles;
+  if (error.codigo) body.codigo = error.codigo;
   res.status(error.status).json(body);
 }

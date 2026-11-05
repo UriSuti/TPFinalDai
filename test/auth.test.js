@@ -7,8 +7,8 @@ before(resetDb);
 after(cerrar);
 
 describe('registro y login', () => {
-  test('registra y devuelve usuario + tokens, sin password_hash', async () => {
-    const res = await api().post('/api/auth/register')
+  test('con ?modo=tokens registra y devuelve usuario + tokens, sin password_hash', async () => {
+    const res = await api().post('/api/auth/register?modo=tokens')
       .send({ nombre: 'Ramón', apellido: 'Pérez', email: 'Ramon@Mail.com', password: 'clave-segura' })
       .expect(201);
     assert.equal(res.body.usuario.email, 'Ramon@Mail.com');
@@ -65,6 +65,72 @@ describe('JWT y middleware requireAuth', () => {
     assert.equal(upd.body.lastfm_usuario, 'ramon_fm');
     assert.equal(upd.body.rol, 'usuario'); // campos fuera del schema se ignoran
     await api().patch('/api/me').set(u.auth).send({}).expect(400);
+  });
+});
+
+describe('sesión con cookie (navegador)', () => {
+  const datos = { nombre: 'Web', apellido: 'User', email: 'web@test.com', password: 'clave-segura' };
+  const cookieDe = (res) => res.headers['set-cookie']?.find((c) => c.startsWith('sesion='));
+  const valorCookie = (cookie) => cookie.split(';')[0];
+
+  test('registro: cookie HttpOnly y SameSite, sin ningún token en el body', async () => {
+    const res = await api().post('/api/auth/register').send(datos).expect(201);
+    assert.deepEqual(Object.keys(res.body), ['usuario']);
+    const cookie = cookieDe(res);
+    assert.match(cookie, /HttpOnly/);
+    assert.match(cookie, /SameSite=Strict/);
+    assert.match(cookie, /Path=\/api/);
+    // Secure depende de NODE_ENV=production: en test va sin el flag
+    assert.doesNotMatch(cookie, /Secure/);
+  });
+
+  test('login: la cookie autentica y no se emite refresh token', async () => {
+    const res = await api().post('/api/auth/login').send({ email: datos.email, password: datos.password }).expect(200);
+    assert.deepEqual(Object.keys(res.body), ['usuario']);
+    const me = await api().get('/api/me').set('Cookie', valorCookie(cookieDe(res))).expect(200);
+    assert.equal(me.body.email, datos.email);
+    const { rowCount } = await pool.query('SELECT 1 FROM public.refresh_tokens WHERE usuario_id = $1', [me.body.id]);
+    assert.equal(rowCount, 0);
+  });
+
+  test('login fallido: 401 sin código de sesión ni cookie', async () => {
+    const res = await api().post('/api/auth/login').send({ email: datos.email, password: 'mala' }).expect(401);
+    assert.equal(res.body.codigo, undefined);
+    assert.equal(cookieDe(res), undefined);
+  });
+
+  test('códigos de sesión: ausente, inválido y vencido; el vencido lo rechaza el server y borra la cookie', async () => {
+    const ausente = await api().get('/api/me').expect(401);
+    assert.equal(ausente.body.codigo, 'TOKEN_AUSENTE');
+
+    const invalido = await api().get('/api/me').set('Cookie', 'sesion=basura').expect(401);
+    assert.equal(invalido.body.codigo, 'TOKEN_INVALIDO');
+
+    const token = jwt.sign({ rol: 'usuario', exp: Math.floor(Date.now() / 1000) - 10 }, process.env.JWT_SECRET, { subject: '1' });
+    const vencido = await api().get('/api/me').set('Cookie', `sesion=${token}`).expect(401);
+    assert.equal(vencido.body.codigo, 'TOKEN_VENCIDO');
+    assert.match(cookieDe(vencido), /Expires=Thu, 01 Jan 1970/);
+  });
+
+  test('un 401 de negocio no se confunde con uno de sesión', async () => {
+    const login = await api().post('/api/auth/login').send({ email: datos.email, password: datos.password }).expect(200);
+    const cookie = valorCookie(cookieDe(login));
+    const res = await api().put('/api/me/password').set('Cookie', cookie).send({ actual: 'mala', nueva: 'nueva-clave-123' }).expect(401);
+    assert.equal(res.body.codigo, undefined);
+    assert.equal(cookieDe(res), undefined);
+  });
+
+  test('logout sin body borra la cookie', async () => {
+    const res = await api().post('/api/auth/logout').expect(204);
+    assert.match(cookieDe(res), /Expires=Thu, 01 Jan 1970/);
+  });
+
+  test('CORS: permite credenciales solo a los orígenes configurados', async () => {
+    const ok = await api().get('/api/health').set('Origin', 'http://localhost:5173').expect(200);
+    assert.equal(ok.headers['access-control-allow-origin'], 'http://localhost:5173');
+    assert.equal(ok.headers['access-control-allow-credentials'], 'true');
+    const otro = await api().get('/api/health').set('Origin', 'https://malicioso.example').expect(200);
+    assert.equal(otro.headers['access-control-allow-origin'], undefined);
   });
 });
 
