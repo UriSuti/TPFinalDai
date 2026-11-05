@@ -1,4 +1,5 @@
-import { query, withTransaction } from '../db.js';
+import { withTransaction } from '../db.js';
+import * as catalogoRepository from '../repositories/catalogo.js';
 import { obtenerTagsArtista } from './lastfm.js';
 
 // Ni el export de Spotify ni los scrobbles traen géneros: se completan con los tags
@@ -28,38 +29,15 @@ export function tagsAGeneros(tags) {
 
 async function guardarGeneros(artistaId, generos) {
   await withTransaction(async (client) => {
-    if (generos.length) {
-      await client.query(
-        `INSERT INTO public.generos (nombre) SELECT unnest($1::text[])
-         ON CONFLICT ((lower(nombre))) DO NOTHING`,
-        [generos],
-      );
-      await client.query(
-        `INSERT INTO public.artistas_generos (artista_id, genero_id)
-         SELECT $1, g.id FROM public.generos g WHERE lower(g.nombre) = ANY ($2::text[])
-         ON CONFLICT DO NOTHING`,
-        [artistaId, generos],
-      );
-    }
+    if (generos.length) await catalogoRepository.vincularGeneros(artistaId, generos, client);
     // Se marca aunque no haya tags, para no volver a consultarlo en cada sincronización
-    await client.query('UPDATE public.artistas SET generos_sincronizados_en = now() WHERE id = $1', [artistaId]);
+    await catalogoRepository.marcarGenerosSincronizados(artistaId, client);
   });
 }
 
 // Procesa hasta `limite` artistas que todavía no se sincronizaron.
 export async function sincronizarGeneros({ limite = 25, soloDelUsuario } = {}) {
-  const { rows: pendientes } = await query(
-    `SELECT a.id, a.nombre
-       FROM public.artistas a
-      WHERE a.generos_sincronizados_en IS NULL
-        AND ($2::int IS NULL OR EXISTS (
-              SELECT 1 FROM public.reproducciones r
-                JOIN public.canciones c ON c.id = r.cancion_id
-               WHERE c.artista_id = a.id AND r.usuario_id = $2))
-      ORDER BY a.id
-      LIMIT $1`,
-    [limite, soloDelUsuario ?? null],
-  );
+  const pendientes = await catalogoRepository.artistasSinSincronizar(limite, soloDelUsuario);
 
   const resultado = { procesados: 0, conGeneros: 0, errores: [] };
   for (const [i, artista] of pendientes.entries()) {
@@ -80,8 +58,5 @@ export async function sincronizarGeneros({ limite = 25, soloDelUsuario } = {}) {
     }
   }
 
-  const { rows: [{ pendientes: quedan }] } = await query(
-    'SELECT count(*) AS pendientes FROM public.artistas WHERE generos_sincronizados_en IS NULL',
-  );
-  return { ...resultado, pendientes: quedan };
+  return { ...resultado, pendientes: await catalogoRepository.contarArtistasSinSincronizar() };
 }

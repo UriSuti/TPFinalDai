@@ -1,7 +1,8 @@
 import crypto from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import { config } from '../config.js';
-import { query, withTransaction } from '../db.js';
+import { withTransaction } from '../db.js';
+import * as tokensRepository from '../repositories/tokens.js';
 import { unauthorized } from '../utils/errors.js';
 
 // Access token: JWT corto (15 min) que viaja en cada request. No se guarda en la base.
@@ -22,13 +23,9 @@ const hash = (token) => crypto.createHash('sha256').update(token).digest('hex');
 
 // Refresh token: string aleatorio opaco (no JWT), de vida larga. En la base solo va su hash,
 // así un dump robado de la tabla no sirve para iniciar sesión.
-export async function emitirRefreshToken(usuarioId, db = { query }) {
+export async function emitirRefreshToken(usuarioId, db) {
   const token = crypto.randomBytes(48).toString('base64url');
-  await db.query(
-    `INSERT INTO public.refresh_tokens (usuario_id, token_hash, expira_en)
-     VALUES ($1, $2, now() + make_interval(days => $3))`,
-    [usuarioId, hash(token), config.REFRESH_TTL_DIAS],
-  );
+  await tokensRepository.insertar({ usuarioId, tokenHash: hash(token), dias: config.REFRESH_TTL_DIAS }, db);
   return token;
 }
 
@@ -45,35 +42,20 @@ export async function emitirSesion(usuario, db) {
 // las sesiones del usuario (detección de reuso).
 export async function rotarRefreshToken(token) {
   return withTransaction(async (client) => {
-    const { rows } = await client.query(
-      `SELECT rt.id, rt.usuario_id, rt.revocado_en, rt.expira_en < now() AS vencido, u.rol
-         FROM public.refresh_tokens rt
-         JOIN public.usuarios u ON u.id = rt.usuario_id
-        WHERE rt.token_hash = $1
-        FOR UPDATE OF rt`,
-      [hash(token)],
-    );
-    const fila = rows[0];
+    const fila = await tokensRepository.buscarParaRotar(hash(token), client);
     if (!fila) throw unauthorized('Refresh token inválido');
 
     if (fila.revocado_en) {
-      await client.query(
-        `UPDATE public.refresh_tokens SET revocado_en = now()
-          WHERE usuario_id = $1 AND revocado_en IS NULL`,
-        [fila.usuario_id],
-      );
+      await tokensRepository.revocarTodos(fila.usuario_id, client);
       return { reuso: true };
     }
     if (fila.vencido) throw unauthorized('Refresh token vencido');
 
-    await client.query('UPDATE public.refresh_tokens SET revocado_en = now() WHERE id = $1', [fila.id]);
+    await tokensRepository.revocar(fila.id, client);
     return { sesion: await emitirSesion({ id: fila.usuario_id, rol: fila.rol }, client) };
   });
 }
 
 export async function revocarRefreshToken(token) {
-  await query(
-    'UPDATE public.refresh_tokens SET revocado_en = now() WHERE token_hash = $1 AND revocado_en IS NULL',
-    [hash(token)],
-  );
+  await tokensRepository.revocarPorHash(hash(token));
 }

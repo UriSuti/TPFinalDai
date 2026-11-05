@@ -47,17 +47,17 @@ const archivo = (datos) => Buffer.from(JSON.stringify(datos));
 
 describe('importación de Spotify', () => {
   test('sin archivos o con archivos inválidos -> 400', async () => {
-    await api().post('/me/importaciones/spotify').set(ana.auth).expect(400);
-    await api().post('/me/importaciones/spotify').set(ana.auth)
+    await api().post('/api/me/importaciones/spotify').set(ana.auth).expect(400);
+    await api().post('/api/me/importaciones/spotify').set(ana.auth)
       .attach('archivos', Buffer.from('{no es json'), 'roto.json').expect(400);
-    await api().post('/me/importaciones/spotify').set(ana.auth)
+    await api().post('/api/me/importaciones/spotify').set(ana.auth)
       .attach('archivos', Buffer.from('hola'), 'notas.txt').expect(400);
-    await api().post('/me/importaciones/spotify').set(ana.auth)
+    await api().post('/api/me/importaciones/spotify').set(ana.auth)
       .attach('archivos', archivo({ a: 1 }), 'objeto.json').expect(400);
   });
 
   test('importa los dos formatos, descarta podcasts y filas rotas, unifica mayúsculas', async () => {
-    const res = await api().post('/me/importaciones/spotify').set(ana.auth)
+    const res = await api().post('/api/me/importaciones/spotify').set(ana.auth)
       .attach('archivos', archivo(extendido), 'Streaming_History_Audio_2026.json')
       .attach('archivos', archivo(basico), 'StreamingHistory_music_0.json')
       .expect(201);
@@ -74,31 +74,31 @@ describe('importación de Spotify', () => {
   });
 
   test('subir el mismo archivo de nuevo no duplica', async () => {
-    const res = await api().post('/me/importaciones/spotify').set(ana.auth)
+    const res = await api().post('/api/me/importaciones/spotify').set(ana.auth)
       .attach('archivos', archivo(extendido), 'Streaming_History_Audio_2026.json').expect(201);
     assert.equal(res.body[0].filas_insertadas, 0);
     assert.equal(res.body[0].filas_duplicadas, 5);
   });
 
   test('historial paginado y filtrado por fecha, aislado por usuario', async () => {
-    const todo = await api().get('/me/reproducciones').set(ana.auth).expect(200);
+    const todo = await api().get('/api/me/reproducciones').set(ana.auth).expect(200);
     assert.equal(todo.body.total, 6);
-    const marzo5 = await api().get('/me/reproducciones?desde=2026-03-05T00:00:00Z').set(ana.auth).expect(200);
+    const marzo5 = await api().get('/api/me/reproducciones?desde=2026-03-05T00:00:00Z').set(ana.auth).expect(200);
     assert.equal(marzo5.body.total, 1);
     assert.equal(marzo5.body.data[0].artista, 'Cerati');
-    const deBeto = await api().get('/me/reproducciones').set(beto.auth).expect(200);
+    const deBeto = await api().get('/api/me/reproducciones').set(beto.auth).expect(200);
     assert.equal(deBeto.body.total, 0);
   });
 });
 
 describe('wrapped', () => {
   test('años disponibles respetan la zona horaria de Buenos Aires', async () => {
-    const res = await api().get('/me/wrapped').set(ana.auth).expect(200);
+    const res = await api().get('/api/me/wrapped').set(ana.auth).expect(200);
     assert.deepEqual(res.body.map((r) => r.anio), [2026, 2025]);
   });
 
   test('resumen, tops y hábitos de 2026', async () => {
-    const { body: w } = await api().get('/me/wrapped/2026').set(ana.auth).expect(200);
+    const { body: w } = await api().get('/api/me/wrapped/2026').set(ana.auth).expect(200);
 
     // 180000*2 + 5000 + 290000 + 230000 = 885000 ms = 14,75 min
     assert.equal(w.resumen.minutos_escuchados, 15);
@@ -122,14 +122,14 @@ describe('wrapped', () => {
   });
 
   test('endpoints de detalle y errores', async () => {
-    const top = await api().get('/me/wrapped/2026/canciones?limit=1').set(ana.auth).expect(200);
+    const top = await api().get('/api/me/wrapped/2026/canciones?limit=1').set(ana.auth).expect(200);
     assert.equal(top.body.length, 1);
     assert.equal(top.body[0].usuario_id, undefined);
-    const h = await api().get('/me/wrapped/2026/habitos').set(ana.auth).expect(200);
+    const h = await api().get('/api/me/wrapped/2026/habitos').set(ana.auth).expect(200);
     assert.equal(h.body.porHora.length, 24);
-    await api().get('/me/wrapped/2019').set(ana.auth).expect(404);
-    await api().get('/me/wrapped/abc').set(ana.auth).expect(400);
-    await api().get('/me/wrapped/2026').set(beto.auth).expect(404); // beto no tiene datos
+    await api().get('/api/me/wrapped/2019').set(ana.auth).expect(404);
+    await api().get('/api/me/wrapped/abc').set(ana.auth).expect(400);
+    await api().get('/api/me/wrapped/2026').set(beto.auth).expect(404); // beto no tiene datos
   });
 });
 
@@ -139,8 +139,8 @@ describe('Last.fm', () => {
   const scrobble = (i, artista, cancion) => ({ uts: base + i * 3600, artista, cancion, album: 'Disco' });
 
   test('usuario de Last.fm inexistente -> 404; sin usuario -> 400', async () => {
-    await api().post('/me/importaciones/lastfm').set(beto.auth).send({}).expect(400);
-    await api().post('/me/importaciones/lastfm').set(beto.auth).send({ usuario: 'noexiste' }).expect(404);
+    await api().post('/api/me/importaciones/lastfm').set(beto.auth).send({}).expect(400);
+    await api().post('/api/me/importaciones/lastfm').set(beto.auth).send({ usuario: 'noexiste' }).expect(404);
   });
 
   test('sincroniza, guarda el usuario en el perfil y la segunda vez es incremental', async () => {
@@ -149,16 +149,16 @@ describe('Last.fm', () => {
       scrobble(1, 'Wos', 'Canguro'),
       scrobble(0, 'Duki', 'Goteo'), // ya existe en el catálogo por el import de Spotify
     ];
-    const r1 = await api().post('/me/importaciones/lastfm').set(beto.auth).send({ usuario: 'beto_fm' }).expect(201);
+    const r1 = await api().post('/api/me/importaciones/lastfm').set(beto.auth).send({ usuario: 'beto_fm' }).expect(201);
     assert.equal(r1.body.filas_insertadas, 3);
     assert.equal(r1.body.completo, true);
 
-    const me = await api().get('/me').set(beto.auth).expect(200);
+    const me = await api().get('/api/me').set(beto.auth).expect(200);
     assert.equal(me.body.lastfm_usuario, 'beto_fm');
 
     lastfm.scrobbles.unshift(scrobble(3, 'Wos', 'Alma dinamita'));
     lastfm.llamadas = [];
-    const r2 = await api().post('/me/importaciones/lastfm').set(beto.auth).send({}).expect(201);
+    const r2 = await api().post('/api/me/importaciones/lastfm').set(beto.auth).send({}).expect(201);
     assert.equal(r2.body.filas_insertadas, 1);
     assert.equal(Number(lastfm.llamadas[0].from), base + 2 * 3600 + 1); // pidió solo lo nuevo
 
@@ -167,7 +167,7 @@ describe('Last.fm', () => {
   });
 
   test('wrapped con datos de Last.fm marca los minutos como estimados', async () => {
-    const { body: w } = await api().get('/me/wrapped/2026').set(beto.auth).expect(200);
+    const { body: w } = await api().get('/api/me/wrapped/2026').set(beto.auth).expect(200);
     assert.equal(w.resumen.streams, 4);
     assert.equal(w.minutosEstimados, true);
     assert.equal(w.resumen.minutos_escuchados, 14); // 4 x 3:30 estimado
@@ -178,7 +178,7 @@ describe('Last.fm', () => {
     const carlos = await crearUsuario();
     lastfm.scrobbles = Array.from({ length: 450 }, (_, i) => scrobble(1000 + i, 'Nathy Peluso', `Tema ${i}`)).reverse();
     lastfm.llamadas = [];
-    const r = await api().post('/me/importaciones/lastfm').set(carlos.auth).send({ usuario: 'carlos' }).expect(201);
+    const r = await api().post('/api/me/importaciones/lastfm').set(carlos.auth).send({ usuario: 'carlos' }).expect(201);
     assert.equal(r.body.filas_insertadas, 450);
     assert.deepEqual(lastfm.llamadas.map((l) => l.page), ['1', '3', '2']);
     assert.ok(lastfm.llamadas.every((l) => l.to === lastfm.llamadas[0].to)); // ventana fija
@@ -198,47 +198,47 @@ describe('Last.fm', () => {
       Wos: [{ name: 'Rap', count: '100' }, { name: 'Hip-Hop', count: '60' }, { name: 'seen live', count: '50' }],
       Duki: [{ name: 'Trap', count: '100' }, { name: 'rap', count: '80' }],
     };
-    const r = await api().post('/generos/sincronizar').set(beto.auth).send({}).expect(200);
+    const r = await api().post('/api/generos/sincronizar').set(beto.auth).send({}).expect(200);
     assert.equal(r.body.procesados, 2); // solo artistas que escuchó beto
     assert.equal(r.body.conGeneros, 2);
 
-    const { body: w } = await api().get('/me/wrapped/2026').set(beto.auth).expect(200);
+    const { body: w } = await api().get('/api/me/wrapped/2026').set(beto.auth).expect(200);
     assert.equal(w.topGeneros[0].genero, 'rap');     // Wos (3) + Duki (1)
     assert.equal(w.topGeneros[0].streams, 4);
     assert.equal(w.topGeneros[0].porcentaje, 100);
 
     // Ya sincronizados: no se vuelven a pedir
     lastfm.llamadas = [];
-    await api().post('/generos/sincronizar').set(beto.auth).send({}).expect(200);
+    await api().post('/api/generos/sincronizar').set(beto.auth).send({}).expect(200);
     assert.equal(lastfm.llamadas.length, 0);
   });
 });
 
 describe('deshacer y carga manual', () => {
   test('borrar una importación borra sus reproducciones', async () => {
-    const { body: imps } = await api().get('/me/importaciones').set(ana.auth).expect(200);
+    const { body: imps } = await api().get('/api/me/importaciones').set(ana.auth).expect(200);
     const basicoImp = imps.find((i) => i.detalle === 'StreamingHistory_music_0.json');
-    await api().delete(`/me/importaciones/${basicoImp.id}`).set(beto.auth).expect(404); // no es de beto
-    await api().delete(`/me/importaciones/${basicoImp.id}`).set(ana.auth).expect(204);
-    const res = await api().get('/me/reproducciones').set(ana.auth).expect(200);
+    await api().delete(`/api/me/importaciones/${basicoImp.id}`).set(beto.auth).expect(404); // no es de beto
+    await api().delete(`/api/me/importaciones/${basicoImp.id}`).set(ana.auth).expect(204);
+    const res = await api().get('/api/me/reproducciones').set(ana.auth).expect(200);
     assert.equal(res.body.total, 5);
   });
 
   test('POST /me/reproducciones manual y DELETE', async () => {
     const { rows: [c] } = await pool.query("SELECT id FROM public.canciones WHERE nombre = 'Goteo'");
-    const r = await api().post('/me/reproducciones').set(ana.auth)
+    const r = await api().post('/api/me/reproducciones').set(ana.auth)
       .send({ cancionId: c.id, fechaHora: '2026-07-01T20:00:00-03:00', msReproducidos: 100000 }).expect(201);
     assert.equal(r.body.fuente, 'manual');
-    await api().post('/me/reproducciones').set(ana.auth).send({ cancionId: 9999 }).expect(400);
-    await api().delete(`/me/reproducciones/${r.body.id}`).set(beto.auth).expect(404);
-    await api().delete(`/me/reproducciones/${r.body.id}`).set(ana.auth).expect(204);
+    await api().post('/api/me/reproducciones').set(ana.auth).send({ cancionId: 9999 }).expect(400);
+    await api().delete(`/api/me/reproducciones/${r.body.id}`).set(beto.auth).expect(404);
+    await api().delete(`/api/me/reproducciones/${r.body.id}`).set(ana.auth).expect(204);
   });
 
   test('no se puede borrar una canción con historial (RESTRICT)', async () => {
     const admin = await crearUsuario();
     await pool.query("UPDATE public.usuarios SET rol = 'admin' WHERE id = $1", [admin.usuario.id]);
-    const login = await api().post('/auth/login').send({ email: admin.usuario.email, password: admin.password });
+    const login = await api().post('/api/auth/login').send({ email: admin.usuario.email, password: admin.password });
     const { rows: [c] } = await pool.query("SELECT id FROM public.canciones WHERE nombre = 'Goteo'");
-    await api().delete(`/canciones/${c.id}`).set('Authorization', `Bearer ${login.body.accessToken}`).expect(409);
+    await api().delete(`/api/canciones/${c.id}`).set('Authorization', `Bearer ${login.body.accessToken}`).expect(409);
   });
 });
