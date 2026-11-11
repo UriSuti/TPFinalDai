@@ -15,7 +15,7 @@ npm run dev                         # http://localhost:3000
 npm run admin -- tu@mail.com        # (opcional) darle rol admin a un usuario ya registrado
 ```
 
-Tests de integración (41, contra un PostgreSQL real y un Last.fm falso local):
+Tests de integración (57, contra un PostgreSQL real y un Last.fm falso local):
 
 ```bash
 createdb spotify_wrapped_test
@@ -40,18 +40,29 @@ la importación de Spotify funciona igual; solo quedan desactivados Last.fm y lo
 
 ---
 
-## Modelo de datos (db/schema.sql, v4)
+## Modelo de datos (db/schema.sql, v5)
 
 ```
 usuarios ──< playlists (es_album=false) ──< canciones_playlists >── canciones
     │                                                                 │  │
-    ├──< favoritos >──────────────────────────────────────────────────┘  │
+    ├──< favoritos >──────────────────────────────────────────────────┤  │
+    ├──< biblioteca (estado) >────────────────────────────────────────┤  │
+    ├──< resenas (puntuación, comentario) >───────────────────────────┘  │
     ├──< importaciones ──< reproducciones >── canciones ──> artistas ──< artistas_generos >── generos
     ├──< reproducciones                        └──> playlists (es_album=true = álbum) ──> artistas
     └──< refresh_tokens
 ```
 
-Cambios respecto de la v3, todos por lo que traen las fuentes reales:
+Cambios de la v5 (lo que necesita el front). El esquema se carga sobre una base **vacía**: si ya
+tenías una v4, hay que recrearla y volver a importar.
+
+- **`biblioteca`**: estado de cada canción para el usuario (`quiero_escuchar` / `escuchando` /
+  `escuchado`). Es independiente de `favoritos`: una canción puede estar escuchada y ser favorita.
+- **`resenas`**: puntuación (1 a 5) y comentario, uno por usuario y canción.
+- **`canciones.itunes_id` y `canciones.portada_url`**: datos de la API externa con la que el front
+  explora el catálogo. Opcionales: lo importado de Spotify o Last.fm no los trae.
+
+Cambios de la v4 respecto de la v3, todos por lo que traen las fuentes reales:
 
 - **`canciones.duracion` y `canciones.album_id` opcionales**: ni el export ni Last.fm traen la
   duración de la canción, y Last.fm a veces no trae álbum.
@@ -75,49 +86,73 @@ y "stream" = 30 s o más (criterio de Spotify).
 
 ## Autenticación
 
-- **Access token**: JWT HS256 de 15 min con `{ sub: id, rol }`. Va en `Authorization: Bearer <token>`.
-- **Refresh token**: string aleatorio opaco de 7 días; en la base solo va su hash.
-  - **Rotación**: cada `/api/auth/refresh` revoca el usado y entrega uno nuevo.
-  - **Detección de reuso**: si llega un refresh ya revocado (alguien lo robó), se cierran todas las sesiones del usuario.
-- Contraseñas con bcrypt; cambiar la contraseña cierra todas las sesiones.
+- **Access token**: JWT HS256 con `{ sub: id, rol }`, de `JWT_ACCESS_TTL` (2 h por defecto). Su
+  expiración se valida siempre en el server (`requireAuth`, en cada request).
+- Contraseñas con bcrypt; cambiar la contraseña revoca los refresh tokens y borra la cookie de esa sesión.
+  Un JWT ya emitido en otro dispositivo sigue valiendo hasta que vence: es stateless.
 - Login con mensaje genérico y comparación contra un hash falso: no revela qué emails existen.
 - El rol viaja en el JWT: después de `npm run admin` hay que volver a loguearse.
 
-Flujo del front: guardar ambos tokens → si una request da `401 Token vencido`, llamar a
-`/api/auth/refresh`, reemplazar los dos tokens y reintentar.
+### Navegador: cookie HttpOnly (modo por defecto)
+
+`POST /api/auth/login` y `/register` guardan el JWT en la cookie `sesion` y el body solo trae
+`{ usuario }`: JavaScript nunca ve un token, así que un XSS no se lo puede llevar.
+
+- Flags: `HttpOnly`, `SameSite` (`COOKIE_SAMESITE`, `strict` por defecto) y `Secure` (con
+  `NODE_ENV=production` o `SameSite=None`). `Path=/api`.
+- CORS con `credentials: true`, solo para los orígenes de `CORS_ORIGIN`. El front usa `withCredentials`.
+- **La sesión dura lo que dura el JWT o hasta el logout**: no se emite refresh token y no se renueva
+  sola. Al vencer, la API responde `401` con `codigo: "TOKEN_VENCIDO"` y borra la cookie.
+- Con front y back en dominios distintos en producción, usar `COOKIE_SAMESITE=none` (fuerza `Secure`).
+
+Los errores de sesión traen un `codigo` (`TOKEN_AUSENTE`, `TOKEN_INVALIDO`, `TOKEN_VENCIDO`). Así el
+cliente los distingue de otros 401, como una contraseña incorrecta, que no deben cerrarle la sesión.
+
+### Otros clientes: `?modo=tokens`
+
+Para clientes sin cookies (Postman, mobile): `POST /api/auth/login?modo=tokens` devuelve
+`{ usuario, accessToken, refreshToken, tokenType }`. El access token se manda en
+`Authorization: Bearer <token>`.
+
+- **Refresh token**: string aleatorio opaco de 7 días; en la base solo va su hash.
+  - **Rotación**: cada `/api/auth/refresh` revoca el usado y entrega uno nuevo.
+  - **Detección de reuso**: si llega un refresh ya revocado (alguien lo robó), se cierran todas las sesiones del usuario.
+
+Si una request da `401 Token vencido`: llamar a `/api/auth/refresh`, reemplazar los dos tokens y reintentar.
 
 ## Middlewares (en orden)
 
 | Middleware | Para qué |
 |---|---|
 | `helmet` | Headers de seguridad |
-| `cors` | Solo los orígenes de `CORS_ORIGIN` |
+| `cors` | Solo los orígenes de `CORS_ORIGIN`, con credenciales |
 | `morgan` | Log de requests (apagado en test) |
 | `express.json({ limit: '1mb' })` | Parseo del body |
+| `cookieParser` | Parseo de la cookie de sesión |
 | `authLimiter` | 20 intentos / 15 min por IP en login y registro |
-| `requireAuth` / `requireRole('admin')` | Verifica el JWT y el rol |
+| `requireAuth` / `requireRole('admin')` | Verifica el JWT (`Bearer` o cookie) y el rol |
 | `validate({ body, query, params })` | Valida con zod; lo validado queda en `req.valid` |
 | `uploadJson` (multer) | Hasta 20 archivos `.json` en memoria, máx. `MAX_UPLOAD_MB` c/u |
 | `notFoundHandler` + `errorHandler` | 404 y errores. Traduce errores de PostgreSQL: UNIQUE → 409, FK inexistente → 400, FK en uso → 409, CHECK → 400 |
 
-Formato de error: `{ "error": "mensaje", "detalles": [...] }`.
+Formato de error: `{ "error": "mensaje", "detalles": [...], "codigo": "..." }` (`detalles` y `codigo` son opcionales).
 
 ---
 
 ## Endpoints
 
 Todas las rutas van bajo `/api`.
-Todo lo que no sea `/api/auth/*` ni `/api/health` requiere `Authorization: Bearer`.
+Todo lo que no sea `/api/auth/*` ni `/api/health` requiere sesión (cookie o `Authorization: Bearer`).
 Las listas paginadas aceptan `?page=1&limit=20` (máx. 100) y devuelven `{ data, page, limit, total, totalPages }`.
 Las duraciones salen en **segundos**.
 
 ### Auth y perfil
 | Método | Ruta | Body | Respuesta |
 |---|---|---|---|
-| POST | `/api/auth/register` | `{ nombre, apellido, email, password }` | 201 `{ usuario, accessToken, refreshToken }` |
+| POST | `/api/auth/register` | `{ nombre, apellido, email, password }` | 201 `{ usuario }` + cookie. Con `?modo=tokens`: `{ usuario, accessToken, refreshToken, tokenType }` |
 | POST | `/api/auth/login` | `{ email, password }` | 200 ídem |
-| POST | `/api/auth/refresh` | `{ refreshToken }` | 200 `{ accessToken, refreshToken }` |
-| POST | `/api/auth/logout` | `{ refreshToken }` | 204 |
+| POST | `/api/auth/refresh` | `{ refreshToken }` | 200 `{ accessToken, refreshToken, tokenType }` |
+| POST | `/api/auth/logout` | `{ refreshToken? }` | 204, borra la cookie |
 | GET | `/api/me` | | perfil |
 | PATCH | `/api/me` | `{ nombre?, apellido?, lastfm_usuario? }` | perfil |
 | PUT | `/api/me/password` | `{ actual, nueva }` | 204 (cierra sesiones) |
@@ -155,6 +190,11 @@ Las duraciones salen en **segundos**.
 | DELETE | `/api/me/playlists/:id/canciones/:cancionId` | |
 | GET | `/api/me/favoritos` | paginado |
 | PUT / DELETE | `/api/me/favoritos/:cancionId` | (PUT es idempotente) |
+| GET | `/api/me/biblioteca?estado=` | paginado; filtro opcional por estado |
+| PUT / DELETE | `/api/me/biblioteca/:cancionId` | `{ estado }`: `quiero_escuchar`, `escuchando` o `escuchado` |
+| GET | `/api/me/resenas` | paginado |
+| PUT / DELETE | `/api/me/resenas/:cancionId` | `{ puntuacion?, comentario? }` (1 a 5; solo cambia lo que se manda) |
+| GET | `/api/me/canciones/estado?artista=&nombre=` | `{ id, estado, favorito, resena, playlists }` de esa canción para el usuario; `id: null` si no está en el catálogo |
 
 Una playlist de otro usuario o un álbum responden **404** (no 403), para no revelar que existe.
 
@@ -172,6 +212,7 @@ Una playlist de otro usuario o un álbum responden **404** (no 403), para no rev
 | GET | `/api/canciones?q=&artistaId=` | paginado; `q` busca en canción y artista |
 | GET | `/api/canciones/:id` | |
 | POST / PATCH / DELETE | `/api/canciones`, `/api/canciones/:id` | `{ nombre, artistaId, albumId?, duracionSegundos? }`; no se borra si tiene historial (409) |
+| POST | `/api/canciones/resolver` | **Cualquier usuario.** `{ nombre, artista, album?, duracionSegundos?, itunesId?, portadaUrl? }`: devuelve la canción del catálogo para una de la API externa, creándola si hace falta. Usa la misma clave natural que las importaciones y nunca pisa datos existentes. `portadaUrl` solo del CDN de Apple |
 
 ---
 
@@ -200,7 +241,7 @@ Las dependencias van siempre hacia la derecha. Para una transacción, el service
 ## Estructura
 
 ```
-db/schema.sql            esquema v4 (tablas, constraints, vistas wrapped_*)
+db/schema.sql            esquema v5 (tablas, constraints, vistas wrapped_*)
 src/
   app.js                 arma Express (sin listen, para testear)
   server.js              listen + cierre prolijo
@@ -210,7 +251,7 @@ src/
   controllers/           auth (+ /me), historial, wrapped, biblioteca, catalogo
   services/
     auth.js              registro, login, perfil, contraseña
-    biblioteca.js        playlists y favoritos
+    biblioteca.js        playlists, favoritos, estados y reseñas
     catalogo.js          géneros, artistas, álbumes, canciones
     historial.js         reproducciones e importaciones
     wrapped.js           arma las respuestas de las estadísticas
@@ -232,7 +273,8 @@ test/                    tests de integración (node:test + supertest)
 - **Spotify + Last.fm en la misma cuenta duplican escuchas**: Spotify registra cuándo terminó la
   canción y Last.fm cuándo empezó, así que `reproducciones_uq` no las detecta como iguales.
   Conviene usar una sola fuente por usuario.
-- **Refresh token en el body**: es más simple para el front. En producción es más seguro mandarlo en
-  una cookie `httpOnly`, pero requiere configurar CORS con credenciales.
+- **Refresh token solo con `?modo=tokens`**: el navegador usa cookie y no se renueva. Tiene una razón
+  práctica además de la consigna: con rotación y detección de reuso, dos pestañas renovando a la vez
+  se detectan como un robo y cierran todas las sesiones.
 - **Importación sincrónica**: alcanza para un TP. Con archivos de cientos de miles de filas convendría
   una cola de trabajos.

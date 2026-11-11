@@ -1,5 +1,6 @@
 import { withTransaction } from '../db.js';
 import * as catalogoRepository from '../repositories/catalogo.js';
+import * as importadorRepository from '../repositories/importador.js';
 import { notFound } from '../utils/errors.js';
 import { offset, paginated } from '../utils/pagination.js';
 import { sincronizarGeneros as sincronizar } from './generos.js';
@@ -96,6 +97,25 @@ export async function obtenerCancion(id) {
 
 export async function crearCancion(datos) {
   const { id } = await catalogoRepository.crearCancion(datos);
+  return obtenerCancion(id);
+}
+
+// Devuelve la canción del catálogo que corresponde a una de la API externa, creándola si hace
+// falta. Usa la misma clave natural que las importaciones: lo que el usuario guarda y lo que
+// escuchó quedan unificados. Crea artista y álbum como una importación, por eso no es solo admin.
+export async function resolverCancion({ artista, album, ...cancion }) {
+  const id = await withTransaction(async (client) => {
+    await importadorRepository.insertarArtistas([artista], client);
+    const [{ id: artistaId }] = await importadorRepository.idsDeArtistas([artista], client);
+
+    let albumId = null;
+    if (album) {
+      await importadorRepository.insertarAlbumes([artistaId], [album], client);
+      [{ id: albumId }] = await importadorRepository.idsDeAlbumes([artistaId], [album], client);
+    }
+
+    return (await catalogoRepository.resolverCancion({ ...cancion, artistaId, albumId }, client)).id;
+  });
   return obtenerCancion(id);
 }
 

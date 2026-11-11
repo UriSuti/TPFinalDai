@@ -4,29 +4,35 @@ import { withTransaction } from '../db.js';
 import * as tokensRepository from '../repositories/tokens.js';
 import * as usuariosRepository from '../repositories/usuarios.js';
 import { conflict, notFound, unauthorized } from '../utils/errors.js';
-import { emitirSesion, revocarRefreshToken, rotarRefreshToken } from './tokens.js';
+import { emitirSesion, firmarAccessToken, revocarRefreshToken, rotarRefreshToken } from './tokens.js';
 
 // Hash de una contraseña cualquiera: si el email no existe igual se compara contra algo,
 // así el tiempo de respuesta no revela qué emails están registrados.
 const HASH_FALSO = bcrypt.hashSync('contraseña-que-no-existe', config.BCRYPT_ROUNDS);
 
-export async function registrar({ nombre, apellido, email, password }) {
+// Modo 'cookie' (navegador): solo el JWT; la sesión termina cuando vence. No se emite refresh
+// token para no dejar en la base uno que nadie va a usar. Modo 'tokens': access + refresh.
+const crearSesion = (usuario, modo, db) => (
+  modo === 'tokens' ? emitirSesion(usuario, db) : { accessToken: firmarAccessToken(usuario) }
+);
+
+export async function registrar({ nombre, apellido, email, password }, modo) {
   const passwordHash = await bcrypt.hash(password, config.BCRYPT_ROUNDS);
 
   return withTransaction(async (client) => {
     const usuario = await usuariosRepository.crear({ nombre, apellido, email, passwordHash }, client);
     if (!usuario) throw conflict('Ya existe una cuenta con ese email');
-    return { usuario, ...(await emitirSesion(usuario, client)) };
+    return { usuario, ...(await crearSesion(usuario, modo, client)) };
   });
 }
 
-export async function login(email, password) {
+export async function login(email, password, modo) {
   const usuario = await usuariosRepository.buscarPorEmailConHash(email);
   const ok = await bcrypt.compare(password, usuario?.password_hash ?? HASH_FALSO);
   if (!usuario || !ok) throw unauthorized('Email o contraseña incorrectos');
 
   delete usuario.password_hash;
-  return { usuario, ...(await emitirSesion(usuario)) };
+  return { usuario, ...(await crearSesion(usuario, modo)) };
 }
 
 export async function refrescar(refreshToken) {

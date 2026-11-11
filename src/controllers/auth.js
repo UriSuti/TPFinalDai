@@ -4,6 +4,7 @@ import { requireAuth } from '../middlewares/auth.js';
 import { authLimiter } from '../middlewares/rateLimit.js';
 import { validate } from '../middlewares/validate.js';
 import * as authService from '../services/auth.js';
+import { borrarCookieSesion, guardarCookieSesion } from '../utils/cookieSesion.js';
 
 export const authRouter = Router();
 export const meRouter = Router();
@@ -20,16 +21,29 @@ const registroSchema = z.object({
   password,
 });
 
-authRouter.post('/register', authLimiter, validate({ body: registroSchema }), async (req, res) => {
-  res.status(201).json(await authService.registrar(req.valid.body));
+// Por defecto (navegador) el JWT va en una cookie HttpOnly y el body solo trae el usuario:
+// JavaScript nunca ve un token. Clientes sin cookies (Postman, mobile): ?modo=tokens
+// devuelve access + refresh en el body, para usarlos con "Authorization: Bearer".
+const modoQuery = z.object({ modo: z.enum(['cookie', 'tokens']).default('cookie') });
+
+function responderSesion(res, status, { usuario, ...sesion }, modo) {
+  if (modo === 'tokens') return res.status(status).json({ usuario, ...sesion });
+  guardarCookieSesion(res, sesion.accessToken);
+  return res.status(status).json({ usuario });
+}
+
+authRouter.post('/register', authLimiter, validate({ body: registroSchema, query: modoQuery }), async (req, res) => {
+  const { modo } = req.valid.query;
+  responderSesion(res, 201, await authService.registrar(req.valid.body, modo), modo);
 });
 
 authRouter.post(
   '/login',
   authLimiter,
-  validate({ body: z.object({ email: z.string().trim(), password: z.string() }) }),
+  validate({ body: z.object({ email: z.string().trim(), password: z.string() }), query: modoQuery }),
   async (req, res) => {
-    res.json(await authService.login(req.valid.body.email, req.valid.body.password));
+    const { modo } = req.valid.query;
+    responderSesion(res, 200, await authService.login(req.valid.body.email, req.valid.body.password, modo), modo);
   },
 );
 
@@ -39,8 +53,12 @@ authRouter.post('/refresh', validate({ body: refreshSchema }), async (req, res) 
   res.json(await authService.refrescar(req.valid.body.refreshToken));
 });
 
-authRouter.post('/logout', validate({ body: refreshSchema }), async (req, res) => {
-  await authService.logout(req.valid.body.refreshToken);
+// El navegador no manda body: se le borra la cookie. Un cliente con tokens manda su refresh para revocarlo.
+const logoutSchema = z.object({ refreshToken: z.string().min(1).optional() });
+
+authRouter.post('/logout', validate({ body: logoutSchema }), async (req, res) => {
+  if (req.valid.body.refreshToken) await authService.logout(req.valid.body.refreshToken);
+  borrarCookieSesion(res);
   res.status(204).end();
 });
 
@@ -72,11 +90,13 @@ meRouter.put(
   validate({ body: z.object({ actual: z.string(), nueva: password }) }),
   async (req, res) => {
     await authService.cambiarPassword(req.user.id, req.valid.body.actual, req.valid.body.nueva);
+    borrarCookieSesion(res);
     res.status(204).end();
   },
 );
 
 meRouter.delete('/', validate({ body: z.object({ password: z.string() }) }), async (req, res) => {
   await authService.borrarCuenta(req.user.id, req.valid.body.password);
+  borrarCookieSesion(res);
   res.status(204).end();
 });

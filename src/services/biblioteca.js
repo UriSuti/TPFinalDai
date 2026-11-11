@@ -2,7 +2,7 @@ import * as bibliotecaRepository from '../repositories/biblioteca.js';
 import { notFound } from '../utils/errors.js';
 import { offset, paginated } from '../utils/pagination.js';
 
-// Biblioteca del usuario logueado: playlists propias y favoritos.
+// Biblioteca del usuario logueado: playlists propias, favoritos, estados y reseñas.
 // Si una playlist es de otro, se responde 404 (no 403) para no revelar que existe.
 
 async function exigirPlaylistPropia(id, usuarioId) {
@@ -64,4 +64,51 @@ export async function quitarFavorito(usuarioId, cancionId) {
   if (!(await bibliotecaRepository.quitarFavorito(usuarioId, cancionId))) {
     throw notFound('La canción no estaba en favoritos');
   }
+}
+
+// ---------- Biblioteca (estado de cada canción) ----------
+
+export async function listarBiblioteca(usuarioId, { estado, ...p }) {
+  const [rows, total] = await Promise.all([
+    bibliotecaRepository.listarBiblioteca(usuarioId, { estado, limit: p.limit, offset: offset(p) }),
+    bibliotecaRepository.contarBiblioteca(usuarioId, estado),
+  ]);
+  return paginated(rows, p, total);
+}
+
+// Si la canción no existe, la FK tira 23503 y el errorHandler responde 400.
+export const guardarEnBiblioteca = (usuarioId, cancionId, estado) => (
+  bibliotecaRepository.guardarEnBiblioteca(usuarioId, cancionId, estado)
+);
+
+export async function quitarDeBiblioteca(usuarioId, cancionId) {
+  if (!(await bibliotecaRepository.quitarDeBiblioteca(usuarioId, cancionId))) {
+    throw notFound('La canción no estaba en la biblioteca');
+  }
+}
+
+// ---------- Reseñas ----------
+
+export async function listarResenas(usuarioId, p) {
+  const [rows, total] = await Promise.all([
+    bibliotecaRepository.listarResenas(usuarioId, { limit: p.limit, offset: offset(p) }),
+    bibliotecaRepository.contarResenas(usuarioId),
+  ]);
+  return paginated(rows, p, total);
+}
+
+export const guardarResena = (usuarioId, cancionId, datos) => (
+  bibliotecaRepository.guardarResena(usuarioId, cancionId, datos)
+);
+
+export async function quitarResena(usuarioId, cancionId) {
+  if (!(await bibliotecaRepository.quitarResena(usuarioId, cancionId))) throw notFound('No hay una reseña para esa canción');
+}
+
+// ---------- Relación del usuario con una canción ----------
+
+// Si la canción todavía no está en el catálogo, el usuario no tiene nada guardado sobre ella.
+export async function relacionConCancion(usuarioId, artista, nombre) {
+  const fila = await bibliotecaRepository.relacionConCancion(usuarioId, artista, nombre);
+  return fila ?? { id: null, estado: null, favorito: false, resena: null, playlists: [] };
 }

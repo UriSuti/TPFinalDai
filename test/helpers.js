@@ -34,7 +34,7 @@ let n = 0;
 export async function crearUsuario(extra = {}) {
   n++;
   const body = { nombre: 'Test', apellido: `User${n}`, email: `user${n}@test.com`, password: 'password123', ...extra };
-  const res = await api().post('/api/auth/register').send(body).expect(201);
+  const res = await api().post('/api/auth/register?modo=tokens').send(body).expect(201);
   return { ...res.body, auth: { Authorization: `Bearer ${res.body.accessToken}` }, password: body.password };
 }
 
@@ -42,7 +42,7 @@ export async function crearAdmin() {
   const u = await crearUsuario();
   await pool.query("UPDATE public.usuarios SET rol = 'admin' WHERE id = $1", [u.usuario.id]);
   // El rol viaja en el JWT: hay que volver a loguearse para que el token lo tenga
-  const res = await api().post('/api/auth/login').send({ email: u.usuario.email, password: u.password }).expect(200);
+  const res = await api().post('/api/auth/login?modo=tokens').send({ email: u.usuario.email, password: u.password }).expect(200);
   return { ...res.body, auth: { Authorization: `Bearer ${res.body.accessToken}` } };
 }
 

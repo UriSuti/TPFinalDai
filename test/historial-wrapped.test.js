@@ -237,7 +237,7 @@ describe('deshacer y carga manual', () => {
   test('no se puede borrar una canción con historial (RESTRICT)', async () => {
     const admin = await crearUsuario();
     await pool.query("UPDATE public.usuarios SET rol = 'admin' WHERE id = $1", [admin.usuario.id]);
-    const login = await api().post('/api/auth/login').send({ email: admin.usuario.email, password: admin.password });
+    const login = await api().post('/api/auth/login?modo=tokens').send({ email: admin.usuario.email, password: admin.password });
     const { rows: [c] } = await pool.query("SELECT id FROM public.canciones WHERE nombre = 'Goteo'");
     await api().delete(`/api/canciones/${c.id}`).set('Authorization', `Bearer ${login.body.accessToken}`).expect(409);
   });

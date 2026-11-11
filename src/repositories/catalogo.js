@@ -185,7 +185,7 @@ export const borrarAlbum = (id) => query(
 // ---------- Canciones ----------
 
 const SELECT_CANCION = `
-  SELECT c.id, c.nombre, c.duracion, c.spotify_uri,
+  SELECT c.id, c.nombre, c.duracion, c.spotify_uri, c.itunes_id, c.portada_url,
          json_build_object('id', a.id, 'nombre', a.nombre) AS artista,
          CASE WHEN p.id IS NULL THEN NULL ELSE json_build_object('id', p.id, 'nombre', p.nombre) END AS album
     FROM public.canciones c
@@ -216,6 +216,20 @@ export const crearCancion = ({ nombre, artistaId, albumId, duracionSegundos }) =
   `INSERT INTO public.canciones (nombre, artista_id, album_id, duracion)
    VALUES ($1, $2, $3, make_interval(secs => $4)) RETURNING id`,
   [nombre, artistaId, albumId ?? null, duracionSegundos ?? null],
+).then(primera);
+
+// Alta idempotente por clave natural (artista, nombre). Si ya existía (por ejemplo, importada),
+// solo se completa lo que le faltaba: nunca se pisan datos.
+export const resolverCancion = ({ nombre, artistaId, albumId, duracionSegundos, itunesId, portadaUrl }, db) => db.query(
+  `INSERT INTO public.canciones (nombre, artista_id, album_id, duracion, itunes_id, portada_url)
+   VALUES ($1, $2, $3, make_interval(secs => $4), $5, $6)
+   ON CONFLICT (artista_id, (lower(nombre))) DO UPDATE
+     SET album_id = COALESCE(canciones.album_id, EXCLUDED.album_id),
+         duracion = COALESCE(canciones.duracion, EXCLUDED.duracion),
+         itunes_id = COALESCE(canciones.itunes_id, EXCLUDED.itunes_id),
+         portada_url = COALESCE(canciones.portada_url, EXCLUDED.portada_url)
+   RETURNING id`,
+  [nombre, artistaId, albumId ?? null, duracionSegundos ?? null, itunesId ?? null, portadaUrl ?? null],
 ).then(primera);
 
 // Solo cambia los campos presentes en `b`; albumId o duracionSegundos en null los borran.
