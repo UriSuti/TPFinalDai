@@ -3,7 +3,7 @@ import { query } from '../db.js';
 // Acceso a la tabla usuarios. Las funciones que pueden ser parte de una transacción
 // reciben `db` (el client de withTransaction); por defecto usan el pool.
 
-const COLUMNAS = 'id, nombre, apellido, email, rol, lastfm_usuario, fecha_registro';
+const COLUMNAS = 'id, nombre, apellido, email, rol, lastfm_usuario, avatar_url, bio, generos_preferidos, artistas_preferidos, fecha_registro';
 
 // Devuelve undefined si el email ya está registrado
 export async function crear({ nombre, apellido, email, passwordHash }, db = { query }) {
@@ -36,8 +36,18 @@ export async function obtenerPasswordHash(id) {
 }
 
 export async function actualizarPerfil(id, datos) {
-  const campos = Object.entries(datos);
-  const set = campos.map(([k], i) => `${k} = $${i + 2}`).join(', '); // claves fijas del schema zod
+  const campos = Object.entries(datos).map(([key, value]) => {
+    if (key === 'generos_preferidos' || key === 'artistas_preferidos') {
+      return [key, JSON.stringify(value ?? [])];
+    }
+    return [key, value];
+  });
+  const set = campos.map(([k], i) => {
+    if (k === 'generos_preferidos' || k === 'artistas_preferidos') {
+      return `${k} = $${i + 2}::jsonb`;
+    }
+    return `${k} = $${i + 2}`;
+  }).join(', ');
   const { rows } = await query(
     `UPDATE public.usuarios SET ${set} WHERE id = $1 RETURNING ${COLUMNAS}`,
     [id, ...campos.map(([, v]) => v)],

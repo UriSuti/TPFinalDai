@@ -57,6 +57,10 @@ const perfilSchema = z.object({
   nombre: texto.optional(),
   apellido: texto.optional(),
   lastfm_usuario: z.string().trim().min(1).max(64).nullable().optional(),
+  avatar_url: z.string().trim().min(1).max(500).nullable().optional(),
+  bio: z.string().trim().max(500).nullable().optional(),
+  generos_preferidos: z.array(z.string().trim().min(1).max(80)).max(20).optional(),
+  artistas_preferidos: z.array(z.string().trim().min(1).max(80)).max(20).optional(),
 }).refine((b) => Object.keys(b).length > 0, 'Mandá al menos un campo');
 
 meRouter.patch('/', validate({ body: perfilSchema }), async (req, res) => {

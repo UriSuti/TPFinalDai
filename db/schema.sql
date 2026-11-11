@@ -68,6 +68,10 @@ CREATE TABLE public.usuarios (
     password_hash character varying NOT NULL,
     rol character varying DEFAULT 'usuario' NOT NULL,
     lastfm_usuario character varying,
+    avatar_url character varying,
+    bio text,
+    generos_preferidos jsonb DEFAULT '[]'::jsonb NOT NULL,
+    artistas_preferidos jsonb DEFAULT '[]'::jsonb NOT NULL,
     fecha_registro timestamp with time zone DEFAULT now() NOT NULL
 );
 
@@ -180,6 +184,38 @@ CREATE TABLE public.refresh_tokens (
 );
 
 ALTER TABLE public.refresh_tokens OWNER TO postgres;
+
+
+--
+-- PUNTUACIONES
+--
+
+CREATE TABLE public.puntuaciones (
+    usuario_id integer NOT NULL,
+    tipo character varying NOT NULL,
+    item_id integer NOT NULL,
+    puntuacion integer NOT NULL,
+    comentario text,
+    fecha_creacion timestamp with time zone DEFAULT now() NOT NULL,
+    fecha_actualizacion timestamp with time zone DEFAULT now() NOT NULL
+);
+
+ALTER TABLE public.puntuaciones OWNER TO postgres;
+
+ALTER TABLE ONLY public.puntuaciones
+    ADD CONSTRAINT puntuaciones_pk PRIMARY KEY (usuario_id, tipo, item_id);
+ALTER TABLE public.puntuaciones
+    ADD CONSTRAINT puntuaciones_tipo_ck CHECK (tipo IN ('cancion', 'album'));
+ALTER TABLE public.puntuaciones
+    ADD CONSTRAINT puntuaciones_puntuacion_ck CHECK (puntuacion BETWEEN 1 AND 5);
+ALTER TABLE public.puntuaciones
+    ADD CONSTRAINT puntuaciones_comentario_ck CHECK (comentario IS NULL OR length(trim(comentario)) > 0);
+
+ALTER TABLE ONLY public.puntuaciones
+    ADD CONSTRAINT puntuaciones_usuarios_fk FOREIGN KEY (usuario_id)
+    REFERENCES public.usuarios(id) ON DELETE CASCADE;
+
+CREATE INDEX puntuaciones_tipo_item_idx ON public.puntuaciones USING btree (tipo, item_id);
 
 
 --
@@ -354,6 +390,7 @@ CREATE INDEX importaciones_usuario_id_idx ON public.importaciones USING btree (u
 CREATE INDEX reproducciones_cancion_id_idx ON public.reproducciones USING btree (cancion_id);
 CREATE INDEX reproducciones_importacion_id_idx ON public.reproducciones USING btree (importacion_id);
 CREATE INDEX refresh_tokens_usuario_id_idx ON public.refresh_tokens USING btree (usuario_id);
+CREATE INDEX puntuaciones_tipo_item_idx ON public.puntuaciones USING btree (tipo, item_id);
 
 
 --
