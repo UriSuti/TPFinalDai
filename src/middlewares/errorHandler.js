@@ -13,7 +13,8 @@ function desdePostgres(err) {
     case '23505':
       return new AppError(409, 'Ya existe un registro con esos datos', { constraint: err.constraint });
     case '23503':
-      return err.detail?.includes('is still referenced')
+      // El detalle viene en el idioma del servidor (lc_messages): inglés o español
+      return /still referenced|todavía es referida/i.test(err.detail ?? '')
         ? new AppError(409, 'No se puede borrar: hay otros datos que lo usan', { constraint: err.constraint })
         : new AppError(400, 'Referencia a un recurso que no existe', { constraint: err.constraint });
     case '23514':

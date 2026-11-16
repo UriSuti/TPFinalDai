@@ -16,14 +16,25 @@ const crearSesion = (usuario, modo, db) => (
   modo === 'tokens' ? emitirSesion(usuario, db) : { accessToken: firmarAccessToken(usuario) }
 );
 
-export async function registrar({ nombre, apellido, email, password }, modo) {
+// Traduce el UNIQUE violado a un mensaje que el usuario entienda.
+function conflictoDeUsuario(err) {
+  if (err.code !== '23505') return err;
+  if (err.constraint === 'usuarios_email_uq') return conflict('Ya existe una cuenta con ese email');
+  if (err.constraint === 'usuarios_nombre_usuario_uq') return conflict('Ese nombre de usuario ya está en uso');
+  return err;
+}
+
+export async function registrar({ nombre_usuario: nombreUsuario, nombre, apellido, email, password }, modo) {
   const passwordHash = await bcrypt.hash(password, config.BCRYPT_ROUNDS);
 
-  return withTransaction(async (client) => {
-    const usuario = await usuariosRepository.crear({ nombre, apellido, email, passwordHash }, client);
-    if (!usuario) throw conflict('Ya existe una cuenta con ese email');
-    return { usuario, ...(await crearSesion(usuario, modo, client)) };
-  });
+  try {
+    return await withTransaction(async (client) => {
+      const usuario = await usuariosRepository.crear({ nombreUsuario, nombre, apellido, email, passwordHash }, client);
+      return { usuario, ...(await crearSesion(usuario, modo, client)) };
+    });
+  } catch (err) {
+    throw conflictoDeUsuario(err);
+  }
 }
 
 export async function login(email, password, modo) {
@@ -51,7 +62,13 @@ export async function obtenerPerfil(usuarioId) {
   return usuario;
 }
 
-export const actualizarPerfil = (usuarioId, datos) => usuariosRepository.actualizarPerfil(usuarioId, datos);
+export async function actualizarPerfil(usuarioId, datos) {
+  try {
+    return await usuariosRepository.actualizarPerfil(usuarioId, datos);
+  } catch (err) {
+    throw conflictoDeUsuario(err);
+  }
+}
 
 async function passwordCorrecta(usuarioId, password) {
   const hash = await usuariosRepository.obtenerPasswordHash(usuarioId);

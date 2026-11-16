@@ -33,7 +33,15 @@ export async function resetDb() {
 let n = 0;
 export async function crearUsuario(extra = {}) {
   n++;
-  const body = { nombre: 'Test', apellido: `User${n}`, email: `user${n}@test.com`, password: 'password123', ...extra };
+  const body = {
+    nombre_usuario: `user${n}`,
+    nombre: 'Test',
+    apellido: `User${n}`,
+    email: `user${n}@test.com`,
+    password: 'password123',
+    confirmacion: 'password123',
+    ...extra,
+  };
   const res = await api().post('/api/auth/register?modo=tokens').send(body).expect(201);
   return { ...res.body, auth: { Authorization: `Bearer ${res.body.accessToken}` }, password: body.password };
 }

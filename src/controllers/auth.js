@@ -14,11 +14,20 @@ const password = z.string().min(8, 'Mínimo 8 caracteres')
   .refine((p) => Buffer.byteLength(p) <= 72, 'Máximo 72 bytes');
 const texto = z.string().trim().min(1).max(100);
 
+// Se guarda en minúsculas: "Juli_M" y "juli_m" son el mismo usuario.
+const nombreUsuario = z.string().trim().toLowerCase()
+  .regex(/^[a-z0-9_.]{3,30}$/, 'Entre 3 y 30 caracteres: letras, números, punto o guion bajo');
+
 const registroSchema = z.object({
+  nombre_usuario: nombreUsuario,
   nombre: texto,
   apellido: texto,
-  email: z.email().max(254),
+  email: z.email('Email inválido').max(254),
   password,
+  confirmacion: z.string(),
+}).refine((b) => b.password === b.confirmacion, {
+  message: 'Las contraseñas no coinciden',
+  path: ['confirmacion'],
 });
 
 // Por defecto (navegador) el JWT va en una cookie HttpOnly y el body solo trae el usuario:
@@ -34,7 +43,9 @@ function responderSesion(res, status, { usuario, ...sesion }, modo) {
 
 authRouter.post('/register', authLimiter, validate({ body: registroSchema, query: modoQuery }), async (req, res) => {
   const { modo } = req.valid.query;
-  responderSesion(res, 201, await authService.registrar(req.valid.body, modo), modo);
+  // eslint-disable-next-line no-unused-vars
+  const { confirmacion, ...datos } = req.valid.body;
+  responderSesion(res, 201, await authService.registrar(datos, modo), modo);
 });
 
 authRouter.post(
@@ -72,10 +83,13 @@ meRouter.get('/', async (req, res) => {
 });
 
 const perfilSchema = z.object({
+  nombre_usuario: nombreUsuario.optional(),
   nombre: texto.optional(),
   apellido: texto.optional(),
   lastfm_usuario: z.string().trim().min(1).max(64).nullable().optional(),
-  avatar_url: z.string().trim().min(1).max(500).nullable().optional(),
+  // Solo http(s): la URL termina en el src de una imagen del front
+  avatar_url: z.url({ protocol: /^https?$/, error: 'El avatar tiene que ser una URL http o https' })
+    .max(500).nullable().optional(),
   bio: z.string().trim().max(500).nullable().optional(),
   generos_preferidos: z.array(z.string().trim().min(1).max(80)).max(20).optional(),
   artistas_preferidos: z.array(z.string().trim().min(1).max(80)).max(20).optional(),

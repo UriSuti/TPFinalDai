@@ -3,16 +3,16 @@ import { query } from '../db.js';
 // Acceso a la tabla usuarios. Las funciones que pueden ser parte de una transacción
 // reciben `db` (el client de withTransaction); por defecto usan el pool.
 
-const COLUMNAS = 'id, nombre, apellido, email, rol, lastfm_usuario, avatar_url, bio, generos_preferidos, artistas_preferidos, fecha_registro';
+const COLUMNAS = 'id, nombre_usuario, nombre, apellido, email, rol, lastfm_usuario, avatar_url, bio, generos_preferidos, artistas_preferidos, fecha_registro';
 
-// Devuelve undefined si el email ya está registrado
-export async function crear({ nombre, apellido, email, passwordHash }, db = { query }) {
+// Si el email o el nombre de usuario ya existen, PostgreSQL tira 23505 con el nombre del
+// índice violado y el service lo convierte en un 409 con un mensaje claro.
+export async function crear({ nombreUsuario, nombre, apellido, email, passwordHash }, db = { query }) {
   const { rows } = await db.query(
-    `INSERT INTO public.usuarios (nombre, apellido, email, password_hash)
-     VALUES ($1, $2, $3, $4)
-     ON CONFLICT ((lower(email))) DO NOTHING
+    `INSERT INTO public.usuarios (nombre_usuario, nombre, apellido, email, password_hash)
+     VALUES ($1, $2, $3, $4, $5)
      RETURNING ${COLUMNAS}`,
-    [nombre, apellido, email, passwordHash],
+    [nombreUsuario, nombre, apellido, email, passwordHash],
   );
   return rows[0];
 }

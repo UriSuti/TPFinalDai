@@ -9,24 +9,55 @@ after(cerrar);
 describe('registro y login', () => {
   test('con ?modo=tokens registra y devuelve usuario + tokens, sin password_hash', async () => {
     const res = await api().post('/api/auth/register?modo=tokens')
-      .send({ nombre: 'Ramón', apellido: 'Pérez', email: 'Ramon@Mail.com', password: 'clave-segura' })
+      .send({
+        nombre_usuario: 'Ramon_P', nombre: 'Ramón', apellido: 'Pérez', email: 'Ramon@Mail.com',
+        password: 'clave-segura', confirmacion: 'clave-segura',
+      })
       .expect(201);
     assert.equal(res.body.usuario.email, 'Ramon@Mail.com');
+    assert.equal(res.body.usuario.nombre_usuario, 'ramon_p'); // se guarda en minúsculas
     assert.equal(res.body.usuario.rol, 'usuario');
     assert.equal(res.body.usuario.password_hash, undefined);
     assert.ok(res.body.accessToken && res.body.refreshToken);
   });
 
   test('email duplicado (sin importar mayúsculas) -> 409', async () => {
-    await api().post('/api/auth/register')
-      .send({ nombre: 'Otro', apellido: 'X', email: 'ramon@mail.COM', password: 'clave-segura' })
+    const res = await api().post('/api/auth/register')
+      .send({
+        nombre_usuario: 'otro', nombre: 'Otro', apellido: 'X', email: 'ramon@mail.COM',
+        password: 'clave-segura', confirmacion: 'clave-segura',
+      })
       .expect(409);
+    assert.equal(res.body.error, 'Ya existe una cuenta con ese email');
+  });
+
+  test('nombre de usuario duplicado -> 409 con mensaje propio', async () => {
+    const res = await api().post('/api/auth/register')
+      .send({
+        nombre_usuario: 'RAMON_P', nombre: 'Otro', apellido: 'X', email: 'otro@mail.com',
+        password: 'clave-segura', confirmacion: 'clave-segura',
+      })
+      .expect(409);
+    assert.equal(res.body.error, 'Ese nombre de usuario ya está en uso');
   });
 
   test('body inválido -> 400 con detalle por campo', async () => {
-    const res = await api().post('/api/auth/register').send({ nombre: '', email: 'nomail', password: '123' }).expect(400);
+    const res = await api().post('/api/auth/register')
+      .send({ nombre_usuario: 'a b', nombre: '', email: 'nomail', password: '123' }).expect(400);
     const campos = res.body.detalles.map((d) => d.campo);
-    for (const c of ['body.nombre', 'body.apellido', 'body.email', 'body.password']) assert.ok(campos.includes(c), c);
+    for (const c of ['body.nombre_usuario', 'body.nombre', 'body.apellido', 'body.email', 'body.password', 'body.confirmacion']) {
+      assert.ok(campos.includes(c), c);
+    }
+  });
+
+  test('confirmación distinta de la contraseña -> 400', async () => {
+    const res = await api().post('/api/auth/register')
+      .send({
+        nombre_usuario: 'nuevo', nombre: 'N', apellido: 'N', email: 'nuevo@mail.com',
+        password: 'clave-segura', confirmacion: 'otra-clave',
+      })
+      .expect(400);
+    assert.deepEqual(res.body.detalles, [{ campo: 'body.confirmacion', mensaje: 'Las contraseñas no coinciden' }]);
   });
 
   test('JSON mal formado -> 400', async () => {
@@ -66,10 +97,25 @@ describe('JWT y middleware requireAuth', () => {
     assert.equal(upd.body.rol, 'usuario'); // campos fuera del schema se ignoran
     await api().patch('/api/me').set(u.auth).send({}).expect(400);
   });
+
+  test('PATCH /me: avatar, bio y preferencias; el avatar tiene que ser http(s)', async () => {
+    const u = await crearUsuario();
+    const upd = await api().patch('/api/me').set(u.auth).send({
+      avatar_url: 'https://example.com/yo.png',
+      bio: 'Escucho de todo',
+      generos_preferidos: ['Rock', 'Jazz'],
+    }).expect(200);
+    assert.equal(upd.body.avatar_url, 'https://example.com/yo.png');
+    assert.deepEqual(upd.body.generos_preferidos, ['Rock', 'Jazz']);
+    await api().patch('/api/me').set(u.auth).send({ avatar_url: 'javascript:alert(1)' }).expect(400);
+  });
 });
 
 describe('sesión con cookie (navegador)', () => {
-  const datos = { nombre: 'Web', apellido: 'User', email: 'web@test.com', password: 'clave-segura' };
+  const datos = {
+    nombre_usuario: 'web_user', nombre: 'Web', apellido: 'User', email: 'web@test.com',
+    password: 'clave-segura', confirmacion: 'clave-segura',
+  };
   const cookieDe = (res) => res.headers['set-cookie']?.find((c) => c.startsWith('sesion='));
   const valorCookie = (cookie) => cookie.split(';')[0];
 
