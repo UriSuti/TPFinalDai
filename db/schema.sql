@@ -249,12 +249,6 @@ ALTER TABLE public.puntuaciones
 ALTER TABLE public.puntuaciones
     ADD CONSTRAINT puntuaciones_comentario_ck CHECK (comentario IS NULL OR length(trim(comentario)) > 0);
 
-ALTER TABLE ONLY public.puntuaciones
-    ADD CONSTRAINT puntuaciones_usuarios_fk FOREIGN KEY (usuario_id)
-    REFERENCES public.usuarios(id) ON DELETE CASCADE;
-
-CREATE INDEX puntuaciones_tipo_item_idx ON public.puntuaciones USING btree (tipo, item_id);
-
 
 --
 -- PRIMARY KEYS, UNIQUE y CHECK
@@ -439,6 +433,10 @@ ALTER TABLE ONLY public.reproducciones
 
 ALTER TABLE ONLY public.refresh_tokens
     ADD CONSTRAINT refresh_tokens_usuarios_fk FOREIGN KEY (usuario_id)
+    REFERENCES public.usuarios(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.puntuaciones
+    ADD CONSTRAINT puntuaciones_usuarios_fk FOREIGN KEY (usuario_id)
     REFERENCES public.usuarios(id) ON DELETE CASCADE;
 
 
