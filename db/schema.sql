@@ -1,9 +1,15 @@
 --
--- PostgreSQL — Spotify Wrapped v5 (esquema para el backend)
+-- PostgreSQL — Spotify Wrapped v6 (esquema para el backend)
 --
 -- Restaurar sobre una base VACÍA. Requiere PostgreSQL 12+.
 --
--- Cambios respecto de la v4 (motivo: lo que necesita el front):
+-- Cambios respecto de la v5:
+--   * usuarios.nombre_usuario (único, sin importar mayúsculas): lo pide el registro.
+--   * NUEVA tabla actividad: una fila por cada acción del usuario sobre su biblioteca,
+--     favoritos, reseñas y playlists. Alimenta "actividad reciente" y las estadísticas.
+--   * Se elimina la tabla puntuaciones: duplicaba resenas.puntuacion.
+--
+-- Cambios de la v5 respecto de la v4 (motivo: lo que necesita el front):
 --   * NUEVAS tablas: biblioteca (estado de cada canción para el usuario) y resenas
 --     (puntuación y comentario).
 --   * canciones.itunes_id y canciones.portada_url: datos de la API externa con la que se
@@ -46,7 +52,6 @@ CREATE TABLE public.generos (
     nombre character varying NOT NULL
 );
 
-ALTER TABLE public.generos OWNER TO postgres;
 
 
 CREATE TABLE public.artistas (
@@ -55,7 +60,6 @@ CREATE TABLE public.artistas (
     generos_sincronizados_en timestamp with time zone
 );
 
-ALTER TABLE public.artistas OWNER TO postgres;
 
 
 CREATE TABLE public.artistas_generos (
@@ -63,11 +67,11 @@ CREATE TABLE public.artistas_generos (
     genero_id integer NOT NULL
 );
 
-ALTER TABLE public.artistas_generos OWNER TO postgres;
 
 
 CREATE TABLE public.usuarios (
     id integer GENERATED ALWAYS AS IDENTITY,
+    nombre_usuario character varying NOT NULL,
     nombre character varying NOT NULL,
     apellido character varying NOT NULL,
     email character varying NOT NULL,
@@ -81,7 +85,6 @@ CREATE TABLE public.usuarios (
     fecha_registro timestamp with time zone DEFAULT now() NOT NULL
 );
 
-ALTER TABLE public.usuarios OWNER TO postgres;
 
 
 --
@@ -98,7 +101,6 @@ CREATE TABLE public.playlists (
     fecha_creacion timestamp with time zone DEFAULT now() NOT NULL
 );
 
-ALTER TABLE public.playlists OWNER TO postgres;
 
 
 --
@@ -117,7 +119,6 @@ CREATE TABLE public.canciones (
     portada_url character varying
 );
 
-ALTER TABLE public.canciones OWNER TO postgres;
 
 
 CREATE TABLE public.canciones_playlists (
@@ -127,7 +128,6 @@ CREATE TABLE public.canciones_playlists (
     fecha_agregada timestamp with time zone DEFAULT now() NOT NULL
 );
 
-ALTER TABLE public.canciones_playlists OWNER TO postgres;
 
 
 CREATE TABLE public.favoritos (
@@ -136,7 +136,6 @@ CREATE TABLE public.favoritos (
     fecha_agregada timestamp with time zone DEFAULT now() NOT NULL
 );
 
-ALTER TABLE public.favoritos OWNER TO postgres;
 
 
 --
@@ -151,7 +150,6 @@ CREATE TABLE public.biblioteca (
     fecha_actualizacion timestamp with time zone DEFAULT now() NOT NULL
 );
 
-ALTER TABLE public.biblioteca OWNER TO postgres;
 
 
 --
@@ -166,7 +164,6 @@ CREATE TABLE public.resenas (
     fecha_actualizacion timestamp with time zone DEFAULT now() NOT NULL
 );
 
-ALTER TABLE public.resenas OWNER TO postgres;
 
 
 --
@@ -184,7 +181,6 @@ CREATE TABLE public.importaciones (
     filas_descartadas integer DEFAULT 0 NOT NULL
 );
 
-ALTER TABLE public.importaciones OWNER TO postgres;
 
 
 --
@@ -205,7 +201,6 @@ CREATE TABLE public.reproducciones (
     salteada boolean
 );
 
-ALTER TABLE public.reproducciones OWNER TO postgres;
 
 
 --
@@ -221,33 +216,23 @@ CREATE TABLE public.refresh_tokens (
     revocado_en timestamp with time zone
 );
 
-ALTER TABLE public.refresh_tokens OWNER TO postgres;
 
 
 --
--- PUNTUACIONES
+-- Registro de lo que hace el usuario. cancion_id y playlist_id quedan en NULL si después se
+-- borra la canción o la playlist; por eso los nombres se copian en detalle (jsonb) y la
+-- actividad se sigue pudiendo mostrar.
 --
-
-CREATE TABLE public.puntuaciones (
+CREATE TABLE public.actividad (
+    id bigint GENERATED ALWAYS AS IDENTITY,
     usuario_id integer NOT NULL,
     tipo character varying NOT NULL,
-    item_id integer NOT NULL,
-    puntuacion integer NOT NULL,
-    comentario text,
-    fecha_creacion timestamp with time zone DEFAULT now() NOT NULL,
-    fecha_actualizacion timestamp with time zone DEFAULT now() NOT NULL
+    cancion_id integer,
+    playlist_id integer,
+    detalle jsonb DEFAULT '{}'::jsonb NOT NULL,
+    fecha timestamp with time zone DEFAULT now() NOT NULL
 );
 
-ALTER TABLE public.puntuaciones OWNER TO postgres;
-
-ALTER TABLE ONLY public.puntuaciones
-    ADD CONSTRAINT puntuaciones_pk PRIMARY KEY (usuario_id, tipo, item_id);
-ALTER TABLE public.puntuaciones
-    ADD CONSTRAINT puntuaciones_tipo_ck CHECK (tipo IN ('cancion', 'album'));
-ALTER TABLE public.puntuaciones
-    ADD CONSTRAINT puntuaciones_puntuacion_ck CHECK (puntuacion BETWEEN 1 AND 5);
-ALTER TABLE public.puntuaciones
-    ADD CONSTRAINT puntuaciones_comentario_ck CHECK (comentario IS NULL OR length(trim(comentario)) > 0);
 
 
 --
@@ -280,7 +265,10 @@ ALTER TABLE public.usuarios
     ADD CONSTRAINT usuarios_email_ck CHECK (email ~ '^[^@\s]+@[^@\s]+\.[^@\s]+$');
 ALTER TABLE public.usuarios
     ADD CONSTRAINT usuarios_rol_ck CHECK (rol IN ('usuario', 'admin'));
+ALTER TABLE public.usuarios
+    ADD CONSTRAINT usuarios_nombre_usuario_ck CHECK (nombre_usuario ~ '^[a-z0-9_.]{3,30}$');
 CREATE UNIQUE INDEX usuarios_email_uq ON public.usuarios USING btree (lower(email));
+CREATE UNIQUE INDEX usuarios_nombre_usuario_uq ON public.usuarios USING btree (lower(nombre_usuario));
 
 
 ALTER TABLE ONLY public.playlists
@@ -360,6 +348,19 @@ ALTER TABLE ONLY public.refresh_tokens
     ADD CONSTRAINT refresh_tokens_hash_uq UNIQUE (token_hash);
 
 
+ALTER TABLE ONLY public.actividad
+    ADD CONSTRAINT actividad_pk PRIMARY KEY (id);
+ALTER TABLE public.actividad
+    ADD CONSTRAINT actividad_tipo_ck CHECK (tipo IN (
+        'biblioteca_agregar', 'biblioteca_estado', 'biblioteca_quitar',
+        'favorito_agregar', 'favorito_quitar',
+        'resena_crear', 'resena_editar', 'resena_borrar',
+        'playlist_crear', 'playlist_renombrar', 'playlist_borrar',
+        'playlist_agregar_cancion', 'playlist_quitar_cancion',
+        'importacion'
+    ));
+
+
 --
 -- FOREIGN KEYS
 -- RESTRICT en el catálogo (géneros, artistas, álbumes): no se borra nada por accidente.
@@ -435,9 +436,15 @@ ALTER TABLE ONLY public.refresh_tokens
     ADD CONSTRAINT refresh_tokens_usuarios_fk FOREIGN KEY (usuario_id)
     REFERENCES public.usuarios(id) ON DELETE CASCADE;
 
-ALTER TABLE ONLY public.puntuaciones
-    ADD CONSTRAINT puntuaciones_usuarios_fk FOREIGN KEY (usuario_id)
+ALTER TABLE ONLY public.actividad
+    ADD CONSTRAINT actividad_usuarios_fk FOREIGN KEY (usuario_id)
     REFERENCES public.usuarios(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.actividad
+    ADD CONSTRAINT actividad_canciones_fk FOREIGN KEY (cancion_id)
+    REFERENCES public.canciones(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.actividad
+    ADD CONSTRAINT actividad_playlists_fk FOREIGN KEY (playlist_id)
+    REFERENCES public.playlists(id) ON DELETE SET NULL;
 
 
 --
@@ -458,7 +465,9 @@ CREATE INDEX importaciones_usuario_id_idx ON public.importaciones USING btree (u
 CREATE INDEX reproducciones_cancion_id_idx ON public.reproducciones USING btree (cancion_id);
 CREATE INDEX reproducciones_importacion_id_idx ON public.reproducciones USING btree (importacion_id);
 CREATE INDEX refresh_tokens_usuario_id_idx ON public.refresh_tokens USING btree (usuario_id);
-CREATE INDEX puntuaciones_tipo_item_idx ON public.puntuaciones USING btree (tipo, item_id);
+CREATE INDEX actividad_usuario_fecha_idx ON public.actividad USING btree (usuario_id, fecha DESC);
+CREATE INDEX actividad_cancion_id_idx ON public.actividad USING btree (cancion_id);
+CREATE INDEX actividad_playlist_id_idx ON public.actividad USING btree (playlist_id);
 
 
 --
@@ -482,7 +491,6 @@ CREATE VIEW public.playlists_duracion AS
         END, '00:00:00'::interval) AS duracion
    FROM public.playlists p;
 
-ALTER VIEW public.playlists_duracion OWNER TO postgres;
 
 
 --
@@ -508,7 +516,6 @@ CREATE VIEW public.reproducciones_local AS
    FROM (public.reproducciones r
      JOIN public.canciones c ON ((c.id = r.cancion_id)));
 
-ALTER VIEW public.reproducciones_local OWNER TO postgres;
 
 
 CREATE VIEW public.wrapped_resumen AS
@@ -521,7 +528,6 @@ CREATE VIEW public.wrapped_resumen AS
    FROM public.reproducciones_local
   GROUP BY usuario_id, anio;
 
-ALTER VIEW public.wrapped_resumen OWNER TO postgres;
 
 
 CREATE VIEW public.wrapped_top_canciones AS
@@ -541,7 +547,6 @@ CREATE VIEW public.wrapped_top_canciones AS
   WHERE rl.es_stream
   GROUP BY rl.usuario_id, rl.anio, c.id, c.nombre, a.id, a.nombre;
 
-ALTER VIEW public.wrapped_top_canciones OWNER TO postgres;
 
 
 -- Ranking por minutos (como Spotify Wrapped), desempata por streams.
@@ -559,7 +564,6 @@ CREATE VIEW public.wrapped_top_artistas AS
   WHERE rl.es_stream
   GROUP BY rl.usuario_id, rl.anio, a.id, a.nombre;
 
-ALTER VIEW public.wrapped_top_artistas OWNER TO postgres;
 
 
 -- Un stream de un artista con 2 géneros suma a ambos: el porcentaje es sobre el
@@ -590,7 +594,6 @@ CREATE VIEW public.wrapped_top_generos AS
           WHERE rl.es_stream
           GROUP BY rl.usuario_id, rl.anio, g.id, g.nombre) t;
 
-ALTER VIEW public.wrapped_top_generos OWNER TO postgres;
 
 
 -- Hábitos: minutos por día de la semana (1 = lunes ... 7 = domingo) y hora (0-23).
@@ -605,7 +608,6 @@ CREATE VIEW public.wrapped_habitos AS
    FROM public.reproducciones_local
   GROUP BY usuario_id, anio, (EXTRACT(isodow FROM fecha_hora_local)), (EXTRACT(hour FROM fecha_hora_local));
 
-ALTER VIEW public.wrapped_habitos OWNER TO postgres;
 
 
 --

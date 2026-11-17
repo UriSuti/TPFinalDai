@@ -1,3 +1,4 @@
+import * as actividadRepository from '../repositories/actividad.js';
 import * as historialRepository from '../repositories/historial.js';
 import * as usuariosRepository from '../repositories/usuarios.js';
 import { badRequest, notFound } from '../utils/errors.js';
@@ -29,6 +30,13 @@ export async function borrarReproduccion(id, usuarioId) {
 
 export const listarImportaciones = (usuarioId) => historialRepository.listarImportaciones(usuarioId);
 
+// La importación ya quedó guardada en su propia transacción; esto solo la deja en la actividad.
+const registrarImportacion = (usuarioId, fuente, origen, importacion) => actividadRepository.registrar({
+  usuarioId,
+  tipo: 'importacion',
+  detalle: { fuente, origen, insertadas: importacion.filas_insertadas },
+});
+
 // archivos: [{ nombre, contenido }]. Cada uno genera su propia importación (se puede deshacer por separado).
 export async function importarSpotify(usuarioId, archivos) {
   // Primero se parsean todos: si uno está mal, no se importa ninguno
@@ -39,14 +47,16 @@ export async function importarSpotify(usuarioId, archivos) {
 
   const importaciones = [];
   for (const p of parseados) {
-    importaciones.push(await importarEventos({
+    const importacion = await importarEventos({
       usuarioId,
       fuente: 'spotify',
       detalle: p.archivo,
       eventos: p.eventos,
       leidas: p.leidas,
       descartadas: p.descartadas,
-    }));
+    });
+    await registrarImportacion(usuarioId, 'spotify', p.archivo, importacion);
+    importaciones.push(importacion);
   }
   return importaciones;
 }
@@ -79,6 +89,9 @@ export async function importarLastfm(usuarioId, { usuario, desde: desdeIso, hast
     leidas: eventos.length,
     descartadas: eventos.length - validos.length,
   });
+  if (importacion.filas_insertadas > 0) {
+    await registrarImportacion(usuarioId, 'lastfm', usuarioLastfm, importacion);
+  }
   // completo = false: había más de 10.000 scrobbles; volver a llamar trae el resto
   return { ...importacion, completo };
 }

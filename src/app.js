@@ -11,7 +11,8 @@ import { bibliotecaRouter } from './controllers/biblioteca.js';
 import { catalogoRouter } from './controllers/catalogo.js';
 import { historialRouter } from './controllers/historial.js';
 import { wrappedRouter } from './controllers/wrapped.js';
-import { puntuacionesRouter } from './controllers/puntuaciones.js';
+import { actividadRouter } from './controllers/actividad.js';
+import { estadisticasRouter } from './controllers/estadisticas.js';
 
 // app separado de server.js para poder testearlo con supertest sin abrir un puerto.
 export const app = express();
@@ -37,8 +38,9 @@ api.get('/health', async (_req, res) => {
 
 api.use('/auth', authRouter);
 api.use('/me', meRouter);
-api.use('/me', puntuacionesRouter);
-api.use('/me', bibliotecaRouter);  // /me/playlists, /me/favoritos
+api.use('/me', bibliotecaRouter);  // /me/playlists, /me/favoritos, /me/biblioteca, /me/resenas
+api.use('/me', actividadRouter);   // /me/actividad
+api.use('/me', estadisticasRouter); // /me/estadisticas
 api.use('/me', historialRouter);   // /me/reproducciones, /me/importaciones
 api.use('/me/wrapped', wrappedRouter);
 api.use('/', catalogoRouter);      // /generos, /artistas, /albumes, /canciones

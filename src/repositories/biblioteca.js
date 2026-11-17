@@ -2,19 +2,33 @@ import { query } from '../db.js';
 
 // Playlists de usuario, favoritos, estados y reseñas. Todas las consultas filtran por
 // usuario: nadie puede ver ni tocar lo de otro. Las playlists excluyen a los álbumes (es_album).
+// Las funciones que escriben reciben `db` (el client de withTransaction) para que la acción
+// y su registro en actividad vayan en la misma transacción. Por defecto usan el pool.
 
 // Lo que muestra el front de una canción en cualquier listado
 const COLUMNAS_CANCION = `c.id, c.nombre, c.duracion, c.itunes_id, c.portada_url,
             a.id AS artista_id, a.nombre AS artista`;
 
+// Nombre y artista de una canción: se copian en la actividad por si después se borra.
+export async function datosCancion(cancionId, db = { query }) {
+  const { rows } = await db.query(
+    `SELECT c.nombre, a.nombre AS artista
+       FROM public.canciones c JOIN public.artistas a ON a.id = c.artista_id
+      WHERE c.id = $1`,
+    [cancionId],
+  );
+  return rows[0];
+}
+
 // ---------- Playlists ----------
 
-export async function esPlaylistPropia(id, usuarioId) {
-  const { rows } = await query(
-    'SELECT id FROM public.playlists WHERE id = $1 AND usuario_id = $2 AND NOT es_album',
+// { id, nombre } si la playlist es del usuario; undefined si no existe o es de otro.
+export async function obtenerPlaylistPropia(id, usuarioId, db = { query }) {
+  const { rows } = await db.query(
+    'SELECT id, nombre FROM public.playlists WHERE id = $1 AND usuario_id = $2 AND NOT es_album',
     [id, usuarioId],
   );
-  return rows.length > 0;
+  return rows[0];
 }
 
 export async function listarPlaylists(usuarioId) {
@@ -29,8 +43,8 @@ export async function listarPlaylists(usuarioId) {
   return rows;
 }
 
-export async function crearPlaylist(usuarioId, nombre) {
-  const { rows } = await query(
+export async function crearPlaylist(usuarioId, nombre, db = { query }) {
+  const { rows } = await db.query(
     `INSERT INTO public.playlists (nombre, usuario_id) VALUES ($1, $2)
      RETURNING id, nombre, fecha_creacion`,
     [nombre, usuarioId],
@@ -57,8 +71,8 @@ export async function obtenerPlaylist(id, usuarioId) {
   return rows[0];
 }
 
-export async function renombrarPlaylist(id, usuarioId, nombre) {
-  const { rows } = await query(
+export async function renombrarPlaylist(id, usuarioId, nombre, db = { query }) {
+  const { rows } = await db.query(
     `UPDATE public.playlists SET nombre = $3
       WHERE id = $1 AND usuario_id = $2 AND NOT es_album
       RETURNING id, nombre, fecha_creacion`,
@@ -67,17 +81,18 @@ export async function renombrarPlaylist(id, usuarioId, nombre) {
   return rows[0];
 }
 
-// Las funciones de borrado y alta idempotente devuelven cuántas filas tocaron.
-export async function borrarPlaylist(id, usuarioId) {
-  const { rowCount } = await query(
-    'DELETE FROM public.playlists WHERE id = $1 AND usuario_id = $2 AND NOT es_album',
+// Devuelve la playlist borrada ({ id, nombre }) o undefined si no era del usuario.
+export async function borrarPlaylist(id, usuarioId, db = { query }) {
+  const { rows } = await db.query(
+    'DELETE FROM public.playlists WHERE id = $1 AND usuario_id = $2 AND NOT es_album RETURNING id, nombre',
     [id, usuarioId],
   );
-  return rowCount;
+  return rows[0];
 }
 
-export async function agregarCancion(playlistId, cancionId) {
-  const { rowCount } = await query(
+// Las funciones de borrado y alta idempotente devuelven cuántas filas tocaron.
+export async function agregarCancion(playlistId, cancionId, db = { query }) {
+  const { rowCount } = await db.query(
     `INSERT INTO public.canciones_playlists (playlist_id, cancion_id) VALUES ($1, $2)
      ON CONFLICT DO NOTHING`,
     [playlistId, cancionId],
@@ -85,8 +100,8 @@ export async function agregarCancion(playlistId, cancionId) {
   return rowCount;
 }
 
-export async function quitarCancion(playlistId, cancionId) {
-  const { rowCount } = await query(
+export async function quitarCancion(playlistId, cancionId, db = { query }) {
+  const { rowCount } = await db.query(
     'DELETE FROM public.canciones_playlists WHERE playlist_id = $1 AND cancion_id = $2',
     [playlistId, cancionId],
   );
@@ -113,16 +128,16 @@ export async function contarFavoritos(usuarioId) {
   return rows[0].total;
 }
 
-export async function agregarFavorito(usuarioId, cancionId) {
-  const { rowCount } = await query(
+export async function agregarFavorito(usuarioId, cancionId, db = { query }) {
+  const { rowCount } = await db.query(
     'INSERT INTO public.favoritos (usuario_id, cancion_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
     [usuarioId, cancionId],
   );
   return rowCount;
 }
 
-export async function quitarFavorito(usuarioId, cancionId) {
-  const { rowCount } = await query(
+export async function quitarFavorito(usuarioId, cancionId, db = { query }) {
+  const { rowCount } = await db.query(
     'DELETE FROM public.favoritos WHERE usuario_id = $1 AND cancion_id = $2',
     [usuarioId, cancionId],
   );
@@ -152,8 +167,18 @@ export async function contarBiblioteca(usuarioId, estado) {
   return rows[0].total;
 }
 
-export async function guardarEnBiblioteca(usuarioId, cancionId, estado) {
-  const { rows } = await query(
+// Estado actual de la canción para el usuario (undefined si no está en la biblioteca).
+// FOR UPDATE: dos requests simultáneas sobre la misma canción no registran la actividad mal.
+export async function obtenerEstado(usuarioId, cancionId, db = { query }) {
+  const { rows } = await db.query(
+    'SELECT estado FROM public.biblioteca WHERE usuario_id = $1 AND cancion_id = $2 FOR UPDATE',
+    [usuarioId, cancionId],
+  );
+  return rows[0]?.estado;
+}
+
+export async function guardarEnBiblioteca(usuarioId, cancionId, estado, db = { query }) {
+  const { rows } = await db.query(
     `INSERT INTO public.biblioteca (usuario_id, cancion_id, estado) VALUES ($1, $2, $3)
      ON CONFLICT (usuario_id, cancion_id) DO UPDATE
        SET estado = EXCLUDED.estado, fecha_actualizacion = now()
@@ -163,8 +188,8 @@ export async function guardarEnBiblioteca(usuarioId, cancionId, estado) {
   return rows[0];
 }
 
-export async function quitarDeBiblioteca(usuarioId, cancionId) {
-  const { rowCount } = await query(
+export async function quitarDeBiblioteca(usuarioId, cancionId, db = { query }) {
+  const { rowCount } = await db.query(
     'DELETE FROM public.biblioteca WHERE usuario_id = $1 AND cancion_id = $2',
     [usuarioId, cancionId],
   );
@@ -191,9 +216,17 @@ export async function contarResenas(usuarioId) {
   return rows[0].total;
 }
 
+export async function obtenerResena(usuarioId, cancionId, db = { query }) {
+  const { rows } = await db.query(
+    'SELECT puntuacion, comentario FROM public.resenas WHERE usuario_id = $1 AND cancion_id = $2 FOR UPDATE',
+    [usuarioId, cancionId],
+  );
+  return rows[0];
+}
+
 // Solo cambia lo que llega: guardar la puntuación no borra el comentario, ni al revés.
-export async function guardarResena(usuarioId, cancionId, { puntuacion, comentario }) {
-  const { rows } = await query(
+export async function guardarResena(usuarioId, cancionId, { puntuacion, comentario }, db = { query }) {
+  const { rows } = await db.query(
     `INSERT INTO public.resenas (usuario_id, cancion_id, puntuacion, comentario) VALUES ($1, $2, $3, $4)
      ON CONFLICT (usuario_id, cancion_id) DO UPDATE
        SET puntuacion = COALESCE(EXCLUDED.puntuacion, resenas.puntuacion),
@@ -205,8 +238,8 @@ export async function guardarResena(usuarioId, cancionId, { puntuacion, comentar
   return rows[0];
 }
 
-export async function quitarResena(usuarioId, cancionId) {
-  const { rowCount } = await query(
+export async function quitarResena(usuarioId, cancionId, db = { query }) {
+  const { rowCount } = await db.query(
     'DELETE FROM public.resenas WHERE usuario_id = $1 AND cancion_id = $2',
     [usuarioId, cancionId],
   );

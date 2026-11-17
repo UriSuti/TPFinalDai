@@ -10,12 +10,31 @@ historial real del usuario.
 npm install
 cp .env.example .env               # completar DATABASE_URL y JWT_SECRET
 createdb spotify_wrapped
-npm run db:init                     # carga db/schema.sql
+npm run db:init                     # carga db/schema.sql (no necesita psql)
+npm run db:seed                     # (opcional) cuenta demo con datos, ver más abajo
 npm run dev                         # http://localhost:3000
 npm run admin -- tu@mail.com        # (opcional) darle rol admin a un usuario ya registrado
 ```
 
-Tests de integración (57, contra un PostgreSQL real y un Last.fm falso local):
+`npm run db:init` falla si la base ya tiene tablas. Para borrar todo y recrearla:
+`npm run db:init -- --reset` (**borra el esquema `public` completo**).
+
+### Cuenta demo
+
+`npm run db:seed` crea una cuenta con historia para probar el front sin esperar el export de
+Spotify: perfil, 14 canciones en la biblioteca con distintos estados, favoritos, reseñas,
+3 playlists, la actividad de todo eso y unas 2.600 reproducciones simuladas (año anterior y
+actual) para el Wrapped.
+
+- Credenciales: `DEMO_EMAIL` (por defecto `demo@mycollection.app`) y `DEMO_PASSWORD` (mínimo 8
+  caracteres, obligatoria), del `.env`.
+- Consulta iTunes para guardar `itunes_id` y portada de cada canción (tarda ~1 minuto por el rate
+  limit). Sin conexión: `npm run db:seed -- --sin-itunes`.
+- Es reproducible: si la cuenta ya existe, la borra y la vuelve a crear. El historial usa una
+  semilla fija, así que sale igual en cada corrida.
+- Carga los géneros de sus artistas a mano: no hace falta `LASTFM_API_KEY`.
+
+Tests de integración (66, contra un PostgreSQL real y un Last.fm falso local):
 
 ```bash
 createdb spotify_wrapped_test
@@ -40,18 +59,33 @@ la importación de Spotify funciona igual; solo quedan desactivados Last.fm y lo
 
 ---
 
-## Modelo de datos (db/schema.sql, v5)
+## Modelo de datos (db/schema.sql, v6)
 
 ```
 usuarios ──< playlists (es_album=false) ──< canciones_playlists >── canciones
     │                                                                 │  │
     ├──< favoritos >──────────────────────────────────────────────────┤  │
     ├──< biblioteca (estado) >────────────────────────────────────────┤  │
-    ├──< resenas (puntuación, comentario) >───────────────────────────┘  │
+    ├──< resenas (puntuación, comentario) >───────────────────────────┤  │
+    ├──< actividad ──> canciones / playlists (opcionales) ────────────┘  │
     ├──< importaciones ──< reproducciones >── canciones ──> artistas ──< artistas_generos >── generos
     ├──< reproducciones                        └──> playlists (es_album=true = álbum) ──> artistas
     └──< refresh_tokens
 ```
+
+Cambios de la v6. Igual que antes, el esquema se carga sobre una base **vacía**
+(`npm run db:init -- --reset` si venías de la v5).
+
+- **`usuarios.nombre_usuario`**: obligatorio y único sin importar mayúsculas. Se guarda en
+  minúsculas; 3 a 30 caracteres entre letras, números, `.` y `_`.
+- **`actividad`**: una fila por cada acción del usuario sobre su biblioteca, favoritos, reseñas,
+  playlists e importaciones. Se registra en la misma transacción que la acción. Si después se borra
+  la canción o la playlist, su id queda en `NULL`, pero el nombre está copiado en `detalle` (jsonb)
+  y la actividad se sigue pudiendo mostrar. Repetir algo que no cambia nada (marcar el mismo
+  estado, un favorito que ya estaba) no genera actividad.
+- **Se eliminó la tabla `puntuaciones`**: duplicaba `resenas.puntuacion`. Las puntuaciones van
+  por `/api/me/resenas`.
+- Se sacaron los `ALTER ... OWNER TO postgres`: el esquema se puede cargar con cualquier usuario.
 
 Cambios de la v5 (lo que necesita el front). El esquema se carga sobre una base **vacía**: si ya
 tenías una v4, hay que recrearla y volver a importar.
@@ -133,7 +167,7 @@ Si una request da `401 Token vencido`: llamar a `/api/auth/refresh`, reemplazar 
 | `requireAuth` / `requireRole('admin')` | Verifica el JWT (`Bearer` o cookie) y el rol |
 | `validate({ body, query, params })` | Valida con zod; lo validado queda en `req.valid` |
 | `uploadJson` (multer) | Hasta 20 archivos `.json` en memoria, máx. `MAX_UPLOAD_MB` c/u |
-| `notFoundHandler` + `errorHandler` | 404 y errores. Traduce errores de PostgreSQL: UNIQUE → 409, FK inexistente → 400, FK en uso → 409, CHECK → 400 |
+| `notFoundHandler` + `errorHandler` | 404 y errores. Traduce errores de PostgreSQL: UNIQUE → 409, FK inexistente → 400, FK en uso → 409, CHECK → 400. Reconoce los mensajes del servidor en inglés y en español |
 
 Formato de error: `{ "error": "mensaje", "detalles": [...], "codigo": "..." }` (`detalles` y `codigo` son opcionales).
 
@@ -149,12 +183,12 @@ Las duraciones salen en **segundos**.
 ### Auth y perfil
 | Método | Ruta | Body | Respuesta |
 |---|---|---|---|
-| POST | `/api/auth/register` | `{ nombre, apellido, email, password }` | 201 `{ usuario }` + cookie. Con `?modo=tokens`: `{ usuario, accessToken, refreshToken, tokenType }` |
+| POST | `/api/auth/register` | `{ nombre_usuario, nombre, apellido, email, password, confirmacion }` | 201 `{ usuario }` + cookie. Con `?modo=tokens`: `{ usuario, accessToken, refreshToken, tokenType }`. 409 si el email o el nombre de usuario ya existen (con un mensaje distinto para cada caso) |
 | POST | `/api/auth/login` | `{ email, password }` | 200 ídem |
 | POST | `/api/auth/refresh` | `{ refreshToken }` | 200 `{ accessToken, refreshToken, tokenType }` |
 | POST | `/api/auth/logout` | `{ refreshToken? }` | 204, borra la cookie |
 | GET | `/api/me` | | perfil |
-| PATCH | `/api/me` | `{ nombre?, apellido?, lastfm_usuario? }` | perfil |
+| PATCH | `/api/me` | `{ nombre_usuario?, nombre?, apellido?, lastfm_usuario?, avatar_url?, bio?, generos_preferidos?, artistas_preferidos? }` | perfil. Al menos un campo. `avatar_url` solo `http`/`https`; `bio` hasta 500 caracteres; las listas, hasta 20 textos |
 | PUT | `/api/me/password` | `{ actual, nueva }` | 204 (cierra sesiones) |
 | DELETE | `/api/me` | `{ password }` | 204 (borra todo en cascada) |
 
@@ -198,6 +232,20 @@ Las duraciones salen en **segundos**.
 
 Una playlist de otro usuario o un álbum responden **404** (no 403), para no revelar que existe.
 
+### Actividad y estadísticas
+| Método | Ruta | Devuelve |
+|---|---|---|
+| GET | `/api/me/actividad?tipo=` | Paginado, lo más reciente primero. `tipo` filtra por grupo: `biblioteca`, `favorito`, `resena`, `playlist` o `importacion`. Cada fila: `{ id, tipo, fecha, detalle, playlist_id, cancion }`; `cancion` es `null` si se borró (el nombre sigue en `detalle`) |
+| GET | `/api/me/estadisticas` | Todo junto: `biblioteca` (total, `porEstado`, `porcentajeEscuchado`, `escuchadasEsteAnio`, `artistasDistintos`), `favoritos`, `playlists`, `resenas` (total, promedio, distribución 1 a 5), `topArtistas`, `topGeneros`, `mejorPuntuadas`, `actividad` (`porMes`, `diasActivosUltimos30`) |
+
+Tipos de actividad: `biblioteca_agregar`, `biblioteca_estado`, `biblioteca_quitar`,
+`favorito_agregar`, `favorito_quitar`, `resena_crear`, `resena_editar`, `resena_borrar`,
+`playlist_crear`, `playlist_renombrar`, `playlist_borrar`, `playlist_agregar_cancion`,
+`playlist_quitar_cancion` e `importacion`.
+
+Las estadísticas son de la **biblioteca** (lo que el usuario guardó, puntuó y organizó). Las de lo
+que **escuchó** están en el Wrapped.
+
 ### Catálogo (lectura: cualquier usuario; escritura: admin)
 | Método | Ruta | Notas |
 |---|---|---|
@@ -225,6 +273,8 @@ Clientes ──> Controllers ──> Services ──> Repositories ──> Postg
              biblioteca      biblioteca   biblioteca
              historial       historial    historial, importador
              wrapped         wrapped      wrapped
+             actividad       actividad    actividad
+             estadisticas    estadisticas estadisticas
                              + tokens, generos, importador (usados por otros services)
                              + lastfm (API externa), spotifyParser (archivos)
 ```
@@ -241,17 +291,19 @@ Las dependencias van siempre hacia la derecha. Para una transacción, el service
 ## Estructura
 
 ```
-db/schema.sql            esquema v5 (tablas, constraints, vistas wrapped_*)
+db/schema.sql            esquema v6 (tablas, constraints, vistas wrapped_*)
 src/
   app.js                 arma Express (sin listen, para testear)
   server.js              listen + cierre prolijo
   config.js              variables de entorno validadas con zod
   db.js                  pool de pg, transacciones, parsers de tipos
   middlewares/           auth, validate, errorHandler, upload, rateLimit
-  controllers/           auth (+ /me), historial, wrapped, biblioteca, catalogo
+  controllers/           auth (+ /me), historial, wrapped, biblioteca, catalogo, actividad, estadisticas
   services/
     auth.js              registro, login, perfil, contraseña
-    biblioteca.js        playlists, favoritos, estados y reseñas
+    biblioteca.js        playlists, favoritos, estados y reseñas (+ su registro en actividad)
+    actividad.js         lista la actividad del usuario
+    estadisticas.js      arma las estadísticas de la biblioteca
     catalogo.js          géneros, artistas, álbumes, canciones
     historial.js         reproducciones e importaciones
     wrapped.js           arma las respuestas de las estadísticas
@@ -260,8 +312,12 @@ src/
     lastfm.js            cliente de Last.fm (scrobbles y tags)
     importador.js        carga por lotes en una transacción
     generos.js           tags de Last.fm → géneros
-  repositories/          SQL: usuarios, tokens, biblioteca, catalogo, historial, importador, wrapped
-scripts/promover-admin.js
+  repositories/          SQL: usuarios, tokens, biblioteca, catalogo, historial, importador, wrapped,
+                         actividad, estadisticas
+scripts/
+  init-db.js             carga el esquema (npm run db:init)
+  seed-demo.js           cuenta demo (npm run db:seed)
+  promover-admin.js      da rol admin (npm run admin)
 test/                    tests de integración (node:test + supertest)
 ```
 
