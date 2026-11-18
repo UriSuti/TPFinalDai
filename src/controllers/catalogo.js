@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { requireAuth, requireRole } from '../middlewares/auth.js';
+import { resolverLimiter } from '../middlewares/rateLimit.js';
 import { validate } from '../middlewares/validate.js';
 import * as catalogoService from '../services/catalogo.js';
 import { paginationQuery } from '../utils/pagination.js';
@@ -151,7 +152,7 @@ const resolverSchema = z.object({
   portadaUrl: z.url({ protocol: /^https$/, hostname: /\.mzstatic\.com$/ }).nullable().optional(),
 });
 
-catalogoRouter.post('/canciones/resolver', validate({ body: resolverSchema }), async (req, res) => {
+catalogoRouter.post('/canciones/resolver', resolverLimiter, validate({ body: resolverSchema }), async (req, res) => {
   res.json(await catalogoService.resolverCancion(req.valid.body));
 });
 

@@ -30,7 +30,7 @@ Los roles son `usuario` y `admin`. En la columna **Auth**, "Admin" significa ses
 | 404 | El recurso no existe **o es de otro usuario** (no se distingue a propósito) | `{ "error": "Playlist no encontrada" }` |
 | 409 | Valor duplicado (UNIQUE) o no se puede borrar porque otros datos lo usan | `{ "error": "Ese nombre de usuario ya está en uso" }` |
 | 413 | Body o archivo demasiado grande | `{ "error": "El body es demasiado grande" }` |
-| 429 | Demasiados intentos en login o registro (20 cada 15 min por IP) | `{ "error": "Demasiados intentos, probá de nuevo en unos minutos" }` |
+| 429 | Demasiados intentos en login o registro (20 cada 15 min por IP), o más de 60 altas en `POST /canciones/resolver` en 15 min por usuario | `{ "error": "Demasiados intentos, probá de nuevo en unos minutos" }` (login y registro) o `{ "error": "Demasiadas solicitudes, probá de nuevo en unos minutos" }` (resolver) |
 | 500 | Error interno (en producción el mensaje es genérico) | `{ "error": "Error interno del servidor" }` |
 | 502 / 503 | Falla de Last.fm (no responde, límite de requests, falta `LASTFM_API_KEY`) | `{ "error": "Last.fm no está configurado (falta LASTFM_API_KEY)" }` |
 
@@ -238,6 +238,6 @@ Todas las respuestas de canción tienen esta forma:
 | GET | `/api/canciones` | Sí | `page`, `limit`, `q` (busca en canción y artista), `artistaId` | **200** paginado de canciones |
 | GET | `/api/canciones/:id` | Sí | | **200** canción. 404 |
 | POST | `/api/canciones` | Admin | `{ nombre, artistaId, albumId?, duracionSegundos? }` | **201** canción. 400 si el artista o el álbum no existen, 409 si el artista ya tiene una canción con ese nombre |
-| POST | `/api/canciones/resolver` | Sí | `{ nombre, artista, album?, duracionSegundos?, itunesId?, portadaUrl? }` (`portadaUrl` solo `https` de `*.mzstatic.com`) | **200** canción del catálogo. La crea (con su artista y álbum) si no existía y, si ya existía, solo completa los datos que le faltaban |
+| POST | `/api/canciones/resolver` | Sí | `{ nombre, artista, album?, duracionSegundos?, itunesId?, portadaUrl? }` (`portadaUrl` solo `https` de `*.mzstatic.com`) | **200** canción del catálogo. La crea (con su artista y álbum) si no existía y, si ya existía, solo completa los datos que le faltaban. 429 si el usuario pasa de 60 pedidos en 15 minutos |
 | PATCH | `/api/canciones/:id` | Admin | `{ nombre?, artistaId?, albumId?, duracionSegundos? }` (al menos uno; `albumId` y `duracionSegundos` aceptan `null`) | **200** canción. 404, 409 |
 | DELETE | `/api/canciones/:id` | Admin | | **204**. 404, 409 si tiene reproducciones |
