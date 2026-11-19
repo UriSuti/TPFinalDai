@@ -1,10 +1,35 @@
-# Spotify Wrapped — Backend
+# My collection — Backend
 
-API REST en **Node.js + Express 5 + PostgreSQL** para el resumen musical estilo Spotify Wrapped:
-artistas y canciones más escuchados, géneros que predominan y hábitos de escucha, a partir del
-historial real del usuario.
+Este es el backend de **My collection**, una app de música que permite revisar los hábitos de escucha y armar una biblioteca personal.
 
-## Arranque rápido
+Con el historial del usuario genera un resumen anual al estilo Wrapped: muestra las canciones y artistas más escuchados, los géneros principales y algunos datos sobre cuándo escucha música. También permite guardar canciones, marcarlas como favoritas, escribir reseñas y crear playlists.
+
+Está hecho con **Node.js, Express 5 y PostgreSQL**. Spotify se usa como referencia para importar el historial, pero la aplicación no utiliza su marca.
+
+Proyecto final de EFSI y DAI (2026).
+
+## Enlaces del proyecto
+
+| Qué | Dónde |
+|---|---|
+| Backend desplegado | https://tpfinaldai-9fzc.onrender.com (probar con `/api/health`) |
+| Front (repositorio) | https://github.com/tomigrins/Spotify-Front |
+| Front desplegado | COMPLETAR |
+| Documentación de endpoints | [docs/API.md](docs/API.md) |
+| Trello | COMPLETAR |
+| Figma | COMPLETAR |
+
+> **A tener en cuenta:** el backend está alojado en el plan gratuito de Render. Si pasa un tiempo sin recibir requests, puede tardar unos 50 segundos en responder la primera vez.
+
+## Integrantes
+
+| Integrante | Responsabilidades |
+|---|---|
+| Uriel Suti | COMPLETAR |
+| Tomi (`tomigrins`) | COMPLETAR |
+| Nico | Documentación de la API, tests de autorización y de rate limit, base en Neon y despliegue del backend en Render |
+
+## Cómo levantar el proyecto
 
 ```bash
 npm install
@@ -16,15 +41,15 @@ npm run dev                         # http://localhost:3000
 npm run admin -- tu@mail.com        # (opcional) darle rol admin a un usuario ya registrado
 ```
 
-`npm run db:init` falla si la base ya tiene tablas. Para borrar todo y recrearla:
-`npm run db:init -- --reset` (**borra el esquema `public` completo**).
+`npm run db:init` está pensado para una base vacía. Si ya tiene tablas, va a fallar. Para empezar de cero se puede usar:
 
-### Cuenta demo
+`npm run db:init -- --reset`
 
-`npm run db:seed` crea una cuenta con historia para probar el front sin esperar el export de
-Spotify: perfil, 14 canciones en la biblioteca con distintos estados, favoritos, reseñas,
-3 playlists, la actividad de todo eso y unas 2.600 reproducciones simuladas (año anterior y
-actual) para el Wrapped.
+**Ojo:** esto elimina todo el esquema `public` de esa base.
+
+### Datos para probar
+
+`npm run db:seed` carga una cuenta de ejemplo para probar el frontend sin tener que importar un historial propio. Incluye un perfil, 14 canciones con distintos estados, favoritos, reseñas, 3 playlists y su actividad. También agrega unas 2.600 reproducciones simuladas, repartidas entre el año anterior y el actual, para que el Wrapped tenga datos.
 
 - Credenciales: `DEMO_EMAIL` (por defecto `demo@mycollection.app`) y `DEMO_PASSWORD` (mínimo 8
   caracteres, obligatoria), del `.env`.
@@ -34,18 +59,55 @@ actual) para el Wrapped.
   semilla fija, así que sale igual en cada corrida.
 - Carga los géneros de sus artistas a mano: no hace falta `LASTFM_API_KEY`.
 
-Tests de integración (66, contra un PostgreSQL real y un Last.fm falso local):
+Tests de integración (79, contra un PostgreSQL real y un Last.fm falso local):
 
 ```bash
 createdb spotify_wrapped_test
 npm test                            # usa TEST_DATABASE_URL o postgres://postgres@localhost:5432/spotify_wrapped_test
 ```
 
+**Los tests borran y recrean el esquema `public` de la base que se les indique.** Apuntarlos
+siempre a una base de test, nunca a la de desarrollo ni a la de producción.
+
 Requiere Node 20+ y PostgreSQL 12+.
+
+### Configuración
+
+Se leen del `.env` (hay un modelo en `.env.example`) y se validan al arrancar en `src/config.js`.
+
+| Variable | Obligatoria | Por defecto | Para qué sirve |
+|---|---|---|---|
+| `NODE_ENV` | No | `development` | `development`, `test` o `production`. En producción la cookie va `Secure` y los errores 500 no muestran detalle |
+| `PORT` | No | `3000` | Puerto del servidor |
+| `DATABASE_URL` | **Sí** | — | Conexión a PostgreSQL |
+| `JWT_SECRET` | **Sí** | — | Clave de firma de los JWT, mínimo 32 caracteres |
+| `JWT_ACCESS_TTL` | No | `2h` | Duración del JWT y de la sesión del navegador |
+| `COOKIE_SAMESITE` | No | `strict` | `strict`, `lax` o `none` (con front y back en dominios distintos: `none`, fuerza `Secure`) |
+| `REFRESH_TTL_DIAS` | No | `7` | Vida del refresh token (solo con `?modo=tokens`) |
+| `BCRYPT_ROUNDS` | No | `12` | Costo del hash de contraseñas, de 4 a 15 |
+| `CORS_ORIGIN` | No | `http://localhost:5173` | Orígenes permitidos del front, separados por coma |
+| `LASTFM_API_KEY` | No | vacío | Habilita Last.fm y los géneros |
+| `LASTFM_BASE_URL` | No | `https://ws.audioscrobbler.com/2.0/` | Solo se cambia en los tests |
+| `MAX_UPLOAD_MB` | No | `20` | Tamaño máximo de cada `.json` de Spotify |
+| `DEMO_EMAIL` | No | `demo@mycollection.app` | Email de la cuenta demo (solo `db:seed`) |
+| `DEMO_PASSWORD` | Para el seed | — | Contraseña de la cuenta demo, mínimo 8 caracteres (solo `db:seed`) |
+| `TEST_DATABASE_URL` | No | `postgres://postgres@localhost:5432/spotify_wrapped_test` | Base que usa `npm test` |
+
+### Dónde está alojado
+
+- **Base de datos:** PostgreSQL en Neon, con conexión directa (sin pooling), porque el esquema
+  usa `SET search_path` de sesión. El esquema se cargó con `npm run db:init`.
+- **Backend:** Render (Web Service, Node), conectado a la rama `main`. Build: `npm install`.
+  Start: `npm start`. Cada merge a `main` redeploya solo.
+- **Variables en Render:** `NODE_ENV=production`, `DATABASE_URL`, `JWT_SECRET`, `COOKIE_SAMESITE=none`
+  y `CORS_ORIGIN` con la URL del front.
+- Las credenciales de producción **no están en el repositorio**: solo existen como variables de
+  entorno en el hosting.
+- `GET /api/health` responde `{ "ok": true }` y consulta la base.
 
 ---
 
-## ¿Hace falta una API externa?
+## De dónde salen los datos
 
 | Fuente | Qué da | Problema | Decisión |
 |---|---|---|---|
@@ -53,13 +115,13 @@ Requiere Node 20+ y PostgreSQL 12+.
 | **Last.fm API** | Scrobbles con fecha (todo el historial) + tags por artista | No trae cuánto se escuchó; los tags son texto libre | **Fuente alternativa y para los géneros.** Solo API key gratis, sin OAuth |
 | **Spotify Web API** | Metadata, top items, últimas 50 escuchas | Desde feb-2026 en modo desarrollo: el dueño de la app necesita Premium, máximo 5 usuarios, sin endpoints por lotes y búsqueda limitada a 10 resultados. "Recently played" solo trae 50 escuchas, no sirve para un resumen anual | **No se usa** |
 
-Conclusión: el Wrapped se arma con el **export de Spotify** (o con **Last.fm** si alguien del grupo
-lo usa), y **Last.fm** completa los **géneros** (`artist.getTopTags`). Sin `LASTFM_API_KEY`
-la importación de Spotify funciona igual; solo quedan desactivados Last.fm y los géneros.
+En la práctica, usamos el **export de Spotify** como fuente principal del Wrapped. También se puede importar el historial de **Last.fm**, si el usuario lo tiene. Last.fm se usa además para buscar los géneros de los artistas (`artist.getTopTags`).
+
+Si no se configura `LASTFM_API_KEY`, la importación de Spotify sigue funcionando; lo único que queda desactivado es la integración con Last.fm y la sincronización de géneros.
 
 ---
 
-## Modelo de datos (db/schema.sql, v6)
+## Base de datos
 
 ```
 usuarios ──< playlists (es_album=false) ──< canciones_playlists >── canciones
@@ -73,8 +135,9 @@ usuarios ──< playlists (es_album=false) ──< canciones_playlists >── 
     └──< refresh_tokens
 ```
 
-Cambios de la v6. Igual que antes, el esquema se carga sobre una base **vacía**
-(`npm run db:init -- --reset` si venías de la v5).
+### Cambios de la versión 6
+
+El esquema se carga sobre una base **vacía**. Si venís de la versión 5, primero recreá la base con `npm run db:init -- --reset`.
 
 - **`usuarios.nombre_usuario`**: obligatorio y único sin importar mayúsculas. Se guarda en
   minúsculas; 3 a 30 caracteres entre letras, números, `.` y `_`.
@@ -87,8 +150,9 @@ Cambios de la v6. Igual que antes, el esquema se carga sobre una base **vacía**
   por `/api/me/resenas`.
 - Se sacaron los `ALTER ... OWNER TO postgres`: el esquema se puede cargar con cualquier usuario.
 
-Cambios de la v5 (lo que necesita el front). El esquema se carga sobre una base **vacía**: si ya
-tenías una v4, hay que recrearla y volver a importar.
+### Cambios de la versión 5
+
+Esta versión agregó datos que necesita el frontend. Si venís de la versión 4, hay que recrear la base y volver a importar el historial.
 
 - **`biblioteca`**: estado de cada canción para el usuario (`quiero_escuchar` / `escuchando` /
   `escuchado`). Es independiente de `favoritos`: una canción puede estar escuchada y ser favorita.
@@ -96,7 +160,9 @@ tenías una v4, hay que recrearla y volver a importar.
 - **`canciones.itunes_id` y `canciones.portada_url`**: datos de la API externa con la que el front
   explora el catálogo. Opcionales: lo importado de Spotify o Last.fm no los trae.
 
-Cambios de la v4 respecto de la v3, todos por lo que traen las fuentes reales:
+### Cambios de la versión 4
+
+Estos cambios se hicieron para contemplar los datos que realmente entregan Spotify y Last.fm:
 
 - **`canciones.duracion` y `canciones.album_id` opcionales**: ni el export ni Last.fm traen la
   duración de la canción, y Last.fm a veces no trae álbum.
@@ -112,13 +178,11 @@ Cambios de la v4 respecto de la v3, todos por lo que traen las fuentes reales:
 - **`usuarios.rol`** (`usuario` / `admin`) y **`usuarios.lastfm_usuario`**.
 - **`artistas.generos_sincronizados_en`**: qué artistas ya se consultaron en Last.fm.
 
-La lógica del Wrapped vive en vistas SQL (`wrapped_resumen`, `wrapped_top_canciones`,
-`wrapped_top_artistas`, `wrapped_top_generos`, `wrapped_habitos`): fechas en hora de Buenos Aires
-y "stream" = 30 s o más (criterio de Spotify).
+Los datos del Wrapped se calculan en estas vistas SQL: `wrapped_resumen`, `wrapped_top_canciones`, `wrapped_top_artistas`, `wrapped_top_generos` y `wrapped_habitos`. Las fechas se interpretan en horario de Buenos Aires y se cuenta como reproducción válida un stream de 30 segundos o más, siguiendo el criterio de Spotify.
 
 ---
 
-## Autenticación
+## Inicio de sesión y seguridad
 
 - **Access token**: JWT HS256 con `{ sub: id, rol }`, de `JWT_ACCESS_TTL` (2 h por defecto). Su
   expiración se valida siempre en el server (`requireAuth`, en cada request).
@@ -127,7 +191,7 @@ y "stream" = 30 s o más (criterio de Spotify).
 - Login con mensaje genérico y comparación contra un hash falso: no revela qué emails existen.
 - El rol viaja en el JWT: después de `npm run admin` hay que volver a loguearse.
 
-### Navegador: cookie HttpOnly (modo por defecto)
+### Para el navegador: cookie HttpOnly
 
 `POST /api/auth/login` y `/register` guardan el JWT en la cookie `sesion` y el body solo trae
 `{ usuario }`: JavaScript nunca ve un token, así que un XSS no se lo puede llevar.
@@ -142,7 +206,7 @@ y "stream" = 30 s o más (criterio de Spotify).
 Los errores de sesión traen un `codigo` (`TOKEN_AUSENTE`, `TOKEN_INVALIDO`, `TOKEN_VENCIDO`). Así el
 cliente los distingue de otros 401, como una contraseña incorrecta, que no deben cerrarle la sesión.
 
-### Otros clientes: `?modo=tokens`
+### Para otros clientes: `?modo=tokens`
 
 Para clientes sin cookies (Postman, mobile): `POST /api/auth/login?modo=tokens` devuelve
 `{ usuario, accessToken, refreshToken, tokenType }`. El access token se manda en
@@ -154,7 +218,9 @@ Para clientes sin cookies (Postman, mobile): `POST /api/auth/login?modo=tokens` 
 
 Si una request da `401 Token vencido`: llamar a `/api/auth/refresh`, reemplazar los dos tokens y reintentar.
 
-## Middlewares (en orden)
+## Middlewares
+
+Se ejecutan en este orden:
 
 | Middleware | Para qué |
 |---|---|
@@ -164,6 +230,7 @@ Si una request da `401 Token vencido`: llamar a `/api/auth/refresh`, reemplazar 
 | `express.json({ limit: '1mb' })` | Parseo del body |
 | `cookieParser` | Parseo de la cookie de sesión |
 | `authLimiter` | 20 intentos / 15 min por IP en login y registro |
+| `resolverLimiter` | 60 altas / 15 min por usuario en `POST /api/canciones/resolver` |
 | `requireAuth` / `requireRole('admin')` | Verifica el JWT (`Bearer` o cookie) y el rol |
 | `validate({ body, query, params })` | Valida con zod; lo validado queda en `req.valid` |
 | `uploadJson` (multer) | Hasta 20 archivos `.json` en memoria, máx. `MAX_UPLOAD_MB` c/u |
@@ -175,10 +242,11 @@ Formato de error: `{ "error": "mensaje", "detalles": [...], "codigo": "..." }` (
 
 ## Endpoints
 
-Todas las rutas van bajo `/api`.
-Todo lo que no sea `/api/auth/*` ni `/api/health` requiere sesión (cookie o `Authorization: Bearer`).
-Las listas paginadas aceptan `?page=1&limit=20` (máx. 100) y devuelven `{ data, page, limit, total, totalPages }`.
-Las duraciones salen en **segundos**.
+Todas las rutas empiezan con `/api`. En [docs/API.md](docs/API.md) está el detalle de cada endpoint, con sus parámetros, respuestas, posibles errores y requisitos de autenticación.
+
+Salvo las rutas de `/api/auth/*` y `/api/health`, hace falta iniciar sesión. Se puede autenticar con la cookie o enviando `Authorization: Bearer`.
+
+Las listas aceptan paginación con `?page=1&limit=20` (el máximo es 100) y responden con `{ data, page, limit, total, totalPages }`. Las duraciones se expresan en **segundos**.
 
 ### Auth y perfil
 | Método | Ruta | Body | Respuesta |
@@ -264,7 +332,7 @@ que **escuchó** están en el Wrapped.
 
 ---
 
-## Arquitectura en capas
+## Cómo está organizado el backend
 
 ```
 Clientes ──> Controllers ──> Services ──> Repositories ──> PostgreSQL
@@ -285,8 +353,7 @@ Clientes ──> Controllers ──> Services ──> Repositories ──> Postg
 | **Services** | Reglas de negocio, transacciones, errores (`notFound`, `conflict`...), llaman a otros services y a Last.fm | Tocar `req` / `res`, SQL |
 | **Repositories** | Todo el SQL. Devuelven filas | Decidir qué hacer si no hay resultado |
 
-Las dependencias van siempre hacia la derecha. Para una transacción, el service abre
-`withTransaction` y le pasa el `client` a cada repositorio (último parámetro, `db`).
+Las dependencias siguen ese sentido: controllers → services → repositories. Cuando una operación necesita una transacción, el service la abre con `withTransaction` y pasa el `client` a los repositorios mediante el último parámetro (`db`).
 
 ## Estructura
 
@@ -321,7 +388,7 @@ scripts/
 test/                    tests de integración (node:test + supertest)
 ```
 
-## Decisiones a tener en cuenta
+## Algunas decisiones del proyecto
 
 - **Rendimiento**: importar un archivo de 15.000 reproducciones tarda ~1,2 s y el Wrapped
   completo ~230 ms. Después de cada importación grande se corre `ANALYZE` para que el
