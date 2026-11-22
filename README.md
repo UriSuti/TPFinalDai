@@ -16,8 +16,8 @@ Proyecto final de EFSI y DAI (2026).
 | Front (repositorio) | https://github.com/tomigrins/Spotify-Front |
 | Front desplegado | COMPLETAR |
 | Documentación de endpoints | [docs/API.md](docs/API.md) |
-| Trello | COMPLETAR |
-| Figma | COMPLETAR |
+| Trello | [Tablero](https://trello.com/invite/b/6ae1ee5d1a0ace8d69167ae2/ATTI9cce4d56107b846ae0bb8ee2dd53a6748CC5A74B/tpfinal-diaefsi) |
+| Figma | [Diseño](https://www.figma.com/design/2NoD0EsCJS2yQB8j9D6tWj/Untitled?node-id=0-1&t=jbcXbBtEcEyxmJ3B-1) |
 
 > **A tener en cuenta:** el backend está alojado en el plan gratuito de Render. Si pasa un tiempo sin recibir requests, puede tardar unos 50 segundos en responder la primera vez.
 
@@ -25,9 +25,24 @@ Proyecto final de EFSI y DAI (2026).
 
 | Integrante | Responsabilidades |
 |---|---|
-| Uriel Suti | COMPLETAR |
-| Tomi (`tomigrins`) | COMPLETAR |
-| Nico | Documentación de la API, tests de autorización y de rate limit, base en Neon y despliegue del backend en Render |
+| Uriel Suti | Integración del front con el backend, aplicación del diseño de Figma, actividad y estadísticas de la biblioteca |
+| Tomás Grinstein (`tomigrins`) | Base del front y consumo de la API externa (iTunes), pantalla de detalle, diseño responsive y deploy del front en Vercel |
+| Nicolás Cukier | Base de datos en Neon, despliegue del backend en Render, documentación de la API y tests del backend (autorización y rate limit) |
+
+## Arquitectura general
+
+```
+Navegador ──> Front (React + Vite, Vercel) ──/api/*──> Backend (Express, Render) ──> PostgreSQL (Neon)
+     │              rewrite de vercel.json                     │
+     └──> iTunes Search API (catálogo)                         └──> Last.fm API (scrobbles y géneros)
+```
+
+- El **front** es una SPA. Busca canciones, álbumes y artistas directamente en la iTunes Search API y
+  todo lo del usuario (sesión, biblioteca, reseñas, playlists, Wrapped) lo pide al backend.
+- En producción el front llama a `/api` en su propio dominio y Vercel reenvía esas requests a Render,
+  así la cookie de sesión es del mismo sitio que el front.
+- El **backend** es una API REST en capas (controllers → services → repositories, ver
+  [Cómo está organizado el backend](#cómo-está-organizado-el-backend)) sobre PostgreSQL.
 
 ## Cómo levantar el proyecto
 
@@ -101,18 +116,24 @@ Se leen del `.env` (hay un modelo en `.env.example`) y se validan al arrancar en
   Start: `npm start`. Cada merge a `main` redeploya solo.
 - **Variables en Render:** `NODE_ENV=production`, `DATABASE_URL`, `JWT_SECRET`, `COOKIE_SAMESITE=none`
   y `CORS_ORIGIN` con la URL del front.
+- **Cómo llega el front:** no llama directo a Render. Pide `/api/*` a su propio dominio de Vercel y
+  `vercel.json` reenvía esas requests al backend. Para el navegador, front y back son el mismo sitio:
+  la cookie de sesión es propia del dominio del front (no la bloquean los navegadores que descartan
+  cookies de terceros) y CORS no interviene. `COOKIE_SAMESITE=none` y `CORS_ORIGIN` quedan
+  configuradas solo para el caso de que un front llame directamente a la URL de Render.
 - Las credenciales de producción **no están en el repositorio**: solo existen como variables de
   entorno en el hosting.
 - `GET /api/health` responde `{ "ok": true }` y consulta la base.
 
 ---
 
-## De dónde salen los datos
+## APIs externas y de dónde salen los datos
 
 | Fuente | Qué da | Problema | Decisión |
 |---|---|---|---|
 | **Export de Spotify** (Privacidad → Descargar tus datos) | Historial completo: fecha, canción, artista, álbum, ms escuchados, shuffle, salteada | Tarda días (extendido: hasta 30). No trae géneros ni duración de la canción | **Fuente principal.** Se sube el JSON |
 | **Last.fm API** | Scrobbles con fecha (todo el historial) + tags por artista | No trae cuánto se escuchó; los tags son texto libre | **Fuente alternativa y para los géneros.** Solo API key gratis, sin OAuth |
+| **iTunes Search API** (`/search`, `/lookup`, sin API key) | Catálogo con portadas, álbumes y artistas | Sin historial de escucha | **La usa el front para explorar.** El backend solo guarda `itunes_id` y `portada_url` vía `POST /api/canciones/resolver` |
 | **Spotify Web API** | Metadata, top items, últimas 50 escuchas | Desde feb-2026 en modo desarrollo: el dueño de la app necesita Premium, máximo 5 usuarios, sin endpoints por lotes y búsqueda limitada a 10 resultados. "Recently played" solo trae 50 escuchas, no sirve para un resumen anual | **No se usa** |
 
 En la práctica, usamos el **export de Spotify** como fuente principal del Wrapped. También se puede importar el historial de **Last.fm**, si el usuario lo tiene. Last.fm se usa además para buscar los géneros de los artistas (`artist.getTopTags`).
@@ -121,7 +142,23 @@ Si no se configura `LASTFM_API_KEY`, la importación de Spotify sigue funcionand
 
 ---
 
-## Base de datos
+## Base de datos (modelo de datos)
+
+| Tabla | Qué guarda | Campos principales |
+|---|---|---|
+| `usuarios` | Cuentas | `id`, `nombre_usuario` (único), `nombre`, `apellido`, `email` (único), `password_hash`, `rol`, `lastfm_usuario`, `avatar_url`, `bio`, `generos_preferidos`, `artistas_preferidos` |
+| `refresh_tokens` | Sesiones de clientes `?modo=tokens` | `usuario_id`, `token_hash` (SHA-256), `expira_en`, `revocado_en` |
+| `artistas` | Catálogo | `id`, `nombre`, `generos_sincronizados_en` |
+| `generos` / `artistas_generos` | Géneros (N a N con artistas) | `nombre` / `artista_id`, `genero_id` |
+| `playlists` | Playlists del usuario (`es_album=false`) y álbumes (`es_album=true`) | `nombre`, `usuario_id` o `artista_id`, `fecha_lanzamiento` |
+| `canciones` | Catálogo | `nombre`, `artista_id`, `album_id`, `duracion`, `spotify_uri`, `itunes_id`, `portada_url` |
+| `canciones_playlists` | Canciones de cada playlist | `playlist_id`, `cancion_id`, `fecha_agregada` |
+| `biblioteca` | Estado de cada canción para el usuario | `usuario_id`, `cancion_id`, `estado` |
+| `favoritos` | Canciones favoritas | `usuario_id`, `cancion_id` |
+| `resenas` | Puntuación y comentario | `usuario_id`, `cancion_id`, `puntuacion` (1 a 5), `comentario` |
+| `importaciones` | Cada archivo o sincronización importada | `usuario_id`, `fuente`, `filas_leidas` / `insertadas` / `descartadas` |
+| `reproducciones` | Historial de escucha (base del Wrapped) | `usuario_id`, `cancion_id`, `importacion_id`, `fuente`, `fecha_hora`, `ms_reproducidos`, `aleatorio`, `salteada` |
+| `actividad` | Acciones del usuario | `usuario_id`, `tipo`, `cancion_id`, `playlist_id`, `detalle` (jsonb), `fecha` |
 
 ```
 usuarios ──< playlists (es_album=false) ──< canciones_playlists >── canciones
@@ -201,7 +238,8 @@ Los datos del Wrapped se calculan en estas vistas SQL: `wrapped_resumen`, `wrapp
 - CORS con `credentials: true`, solo para los orígenes de `CORS_ORIGIN`. El front usa `withCredentials`.
 - **La sesión dura lo que dura el JWT o hasta el logout**: no se emite refresh token y no se renueva
   sola. Al vencer, la API responde `401` con `codigo: "TOKEN_VENCIDO"` y borra la cookie.
-- Con front y back en dominios distintos en producción, usar `COOKIE_SAMESITE=none` (fuerza `Secure`).
+- Con front y back en dominios distintos, usar `COOKIE_SAMESITE=none` (fuerza `Secure`). El deploy actual
+  no lo necesita, porque el front pasa por el rewrite de Vercel (ver [Dónde está alojado](#dónde-está-alojado)).
 
 Los errores de sesión traen un `codigo` (`TOKEN_AUSENTE`, `TOKEN_INVALIDO`, `TOKEN_VENCIDO`). Así el
 cliente los distingue de otros 401, como una contraseña incorrecta, que no deben cerrarle la sesión.
