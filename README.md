@@ -14,7 +14,7 @@ Proyecto final de EFSI y DAI (2026).
 |---|---|
 | Backend desplegado | https://tpfinaldai-9fzc.onrender.com (probar con `/api/health`) |
 | Front (repositorio) | https://github.com/tomigrins/Spotify-Front |
-| Front desplegado | COMPLETAR |
+| Front desplegado | (https://spotify-tp-final.vercel.app) |
 | Documentación de endpoints | [docs/API.md](docs/API.md) |
 | Trello | [Tablero](https://trello.com/invite/b/6ae1ee5d1a0ace8d69167ae2/ATTI9cce4d56107b846ae0bb8ee2dd53a6748CC5A74B/tpfinal-diaefsi) |
 | Figma | [Diseño](https://www.figma.com/design/2NoD0EsCJS2yQB8j9D6tWj/Untitled?node-id=0-1&t=jbcXbBtEcEyxmJ3B-1) |
