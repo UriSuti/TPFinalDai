@@ -5,7 +5,7 @@ import { withTransaction } from '../db.js';
 import * as tokensRepository from '../repositories/tokens.js';
 import { unauthorized } from '../utils/errors.js';
 
-// Access token: JWT corto (15 min) que viaja en cada request. No se guarda en la base.
+// Access token: JWT que viaja en cada request. Dura JWT_ACCESS_TTL (2 h por defecto). No se guarda en la base.
 export function firmarAccessToken(usuario) {
   return jwt.sign({ rol: usuario.rol }, config.JWT_SECRET, {
     subject: String(usuario.id),
